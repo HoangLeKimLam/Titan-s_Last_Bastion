@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+._.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.venv_test/
+venv/
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+
+# OMC tooling state (local automation)
+.omc/
+
+# Debug screenshots from prototype runs
+commander_prototype/debug_*.png
