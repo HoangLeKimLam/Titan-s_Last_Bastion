@@ -205,14 +205,14 @@ class RegularTitan(Titan):
     """
 
     # ── Tham số gameplay (override Titan defaults) ────────────────
-    _DEFAULT_HP              = 300
+    _DEFAULT_HP              = 1000
     _DEFAULT_SPEED           = 60.0
-    _DEFAULT_DAMAGE          = 20
-    _DEFAULT_ATTACK_RANGE    = 55.0
-    _DEFAULT_ATTACK_COOLDOWN = 1.5
+    _DEFAULT_DAMAGE          = 60
+    _DEFAULT_ATTACK_RANGE    = 30.0
+    _DEFAULT_ATTACK_COOLDOWN = 0.75
 
     # ── Cờ chuyển strategy ────────────────────────────────────────
-    _HEAVY_HP_RATIO = 0.4       # HP < 40% → switch HeavyStrikeStrategy
+    _HEAVY_HP_RATIO = 0.5       # HP < 40% → switch HeavyStrikeStrategy
 
     # ── Sprite layout ─────────────────────────────────────────────
     _VARIANTS:    tuple = (2, 4, 5, 6, 7)
@@ -379,20 +379,20 @@ class ArmoredTitan(Titan):
     """
 
     # ── Tham số gameplay ─────────────────────────────────────────
-    _DEFAULT_HP              = 600
-    _DEFAULT_SPEED           = 45.0
-    _DEFAULT_DAMAGE          = 30
-    _DEFAULT_ATTACK_RANGE    = 45.0   # khớp tầm vung tay (frame 64px)
-    _DEFAULT_ATTACK_COOLDOWN = 1.5
+    _DEFAULT_HP              = 2500
+    _DEFAULT_SPEED           = 60.0
+    _DEFAULT_DAMAGE          = 150
+    _DEFAULT_ATTACK_RANGE    = 40.0   # khớp tầm vung tay (frame 64px)
+    _DEFAULT_ATTACK_COOLDOWN = 1.0
 
     # ── Tham số giáp / dash ─────────────────────────────────────
-    ARMOR_REDUCTION  = 0.6      # chặn 60% damage thường
-    _HITS_TO_BREAK   = 10       # ngưỡng vỡ giáp (Ram HOẶC anti_armor)
-    _DASH_SPEED_MULT = 1.5      # ×1.5 so với Run speed
+    ARMOR_REDUCTION  = 0.7      # chặn 60% damage thường
+    _HITS_TO_BREAK   = 15       # ngưỡng vỡ giáp (Ram HOẶC anti_armor)
+    _DASH_SPEED_MULT = 1.67      # ×1.5 so với Run speed
     _DASH_MAX_DIST   = 300.0    # khoảng dash tối đa (px)
     _DASH_HIT_RADIUS = 18.0     # va chạm sprite ↔ target
-    _RAM_HIT_RADIUS  = 60.0     # AI: coi là "trúng Wall"
-    _STAGGER_DURATION = 0.4     # s — đứng khựng sau cú húc
+    _RAM_HIT_RADIUS  = 30.0     # AI: coi là "trúng Wall"
+    _STAGGER_DURATION = 0.3     # s — đứng khựng sau cú húc
     _RECOIL_DIST     = 120.0    # px — walk lùi sau stagger
 
     # ── Sprite layout ────────────────────────────────────────────
@@ -760,11 +760,11 @@ class Wolf(Titan):
     """
 
     # ── Tham số gameplay ─────────────────────────────────────────
-    _DEFAULT_HP              = 200
-    _DEFAULT_SPEED           = 80.0     # nhanh hơn Regular
-    _DEFAULT_DAMAGE          = 15
-    _DEFAULT_ATTACK_RANGE    = 50.0
-    _DEFAULT_ATTACK_COOLDOWN = 1.0      # cắn nhanh
+    _DEFAULT_HP              = 1500
+    _DEFAULT_SPEED           = 70.0     # nhanh hơn Regular
+    _DEFAULT_DAMAGE          = 70
+    _DEFAULT_ATTACK_RANGE    = 30.0
+    _DEFAULT_ATTACK_COOLDOWN = 0.75      # cắn nhanh
 
     # ── Sprite layout ────────────────────────────────────────────
     _WALK_ROWS:   dict = {0: 8,  1: 9,  2: 10, 3: 11}
@@ -880,11 +880,11 @@ class TowerHunter(Titan):
     """
 
     # ── Tham số gameplay ─────────────────────────────────────────
-    _DEFAULT_HP              = 350
-    _DEFAULT_SPEED           = 55.0
-    _DEFAULT_DAMAGE          = 25
-    _DEFAULT_ATTACK_RANGE    = 55.0
-    _DEFAULT_ATTACK_COOLDOWN = 1.5
+    _DEFAULT_HP              = 1500
+    _DEFAULT_SPEED           = 70.0
+    _DEFAULT_DAMAGE          = 70
+    _DEFAULT_ATTACK_RANGE    = 30.0
+    _DEFAULT_ATTACK_COOLDOWN = 0.75
 
     # ── Sprite layout ────────────────────────────────────────────
     _WALK_ROWS:   dict = {0: 8,  1: 9,  2: 10, 3: 11}
@@ -901,7 +901,17 @@ class TowerHunter(Titan):
 
     def __init__(self, x: float, y: float, config: dict = None) -> None:
         super().__init__(x, y, config)
-        self._attack_strategy = TowerHunterStrategy()
+
+        # ── Hai strategy thường trực — switch tùy theo target ──
+        #   • `_heavy_strategy`  : đòn mặc định cho mọi mục tiêu thường.
+        #   • `_siege_strategy`  : đòn chuyên dụng — chỉ dùng khi đánh Tower.
+        # Vì sao tạo sẵn 2 instance thay vì `new` mỗi frame?
+        #   Tránh GC/allocation trong vòng lặp game; cũng cho phép strategy
+        #   giữ state riêng (cooldown, charge…) nếu sau này mở rộng.
+        self._heavy_strategy   = HeavyStrikeStrategy()
+        self._siege_strategy   = TowerHunterStrategy()
+        # Khởi đầu = Heavy (chưa biết target là gì); update() sẽ switch.
+        self._attack_strategy  = self._heavy_strategy
 
         self._direction         = 2
         self._is_moving         = False
@@ -912,6 +922,33 @@ class TowerHunter(Titan):
         self._anim_timer        = 0.0
 
         self._sprite_sheet = None
+
+    def update(self, dt: float) -> None:
+        """Switch strategy theo loại target hiện tại, rồi delegate base.update.
+
+        Quy ước (theo yêu cầu balance):
+            • Target là Tower (`entity_type == 'tower'`)
+                → dùng TowerHunterStrategy (siege, ×1.5, dtype='siege').
+            • Mọi target khác (soldier, commander, wall, hq, titan…)
+                → fallback HeavyStrikeStrategy (×3.0, dtype='heavy').
+
+        Ai gọi:
+            Game loop mỗi frame. Base `Titan.update()` sẽ tự tìm target,
+            tự đánh — ta chỉ cần đảm bảo `_attack_strategy` trỏ đúng
+            instance TRƯỚC khi base gọi `execute()`.
+        """
+        # _target được base.update() refresh; nhưng ngay đầu update này
+        # nó có thể là target của frame trước — vẫn đúng vì:
+        #   1. Nếu target cũ còn sống & trong tầm → frame này đánh tiếp,
+        #      strategy đã match từ frame trước.
+        #   2. Nếu target đổi giữa frame → frame sau lập tức bắt được.
+        target = getattr(self, '_target', None)
+        if target is not None and getattr(target, 'entity_type', '') == 'tower':
+            self._attack_strategy = self._siege_strategy
+        else:
+            self._attack_strategy = self._heavy_strategy
+
+        super().update(dt)
 
     def _load_sprite(self) -> None:
         if self._sprite_sheet is not None:
@@ -991,7 +1028,8 @@ class TowerHunter(Titan):
 class SoldierHunter(Titan):
     """Titan to xác cầm lưỡi hiểm — săn lính, gây splash AoE.
 
-    Strategy: `SoldierHunterStrategy(splash_radius=60)` cố định.
+    Strategy: `SoldierHunterStrategy(splash_radius=self._attack_range)` —
+    vùng cleave AoE bằng đúng tầm đánh, quét MỌI loại entity trong vùng.
 
     Cơ chế:
         • Target chính → damage ×1.0, dtype='normal'
@@ -1004,11 +1042,11 @@ class SoldierHunter(Titan):
     """
 
     # ── Tham số gameplay ─────────────────────────────────────────
-    _DEFAULT_HP              = 400
-    _DEFAULT_SPEED           = 50.0
-    _DEFAULT_DAMAGE          = 35
-    _DEFAULT_ATTACK_RANGE    = 80.0   # lưỡi hiểm vươn xa
-    _DEFAULT_ATTACK_COOLDOWN = 1.5
+    _DEFAULT_HP              = 1500
+    _DEFAULT_SPEED           = 70.0
+    _DEFAULT_DAMAGE          = 70
+    _DEFAULT_ATTACK_RANGE    = 40.0   # lưỡi hiểm vươn xa
+    _DEFAULT_ATTACK_COOLDOWN = 0.75
 
     # ── Sprite layout (walk/run 64×64) ───────────────────────────
     _WALK_ROWS:   dict = {0: 8,  1: 9,  2: 10, 3: 11}
@@ -1028,7 +1066,21 @@ class SoldierHunter(Titan):
 
     def __init__(self, x: float, y: float, config: dict = None) -> None:
         super().__init__(x, y, config)
-        self._attack_strategy = SoldierHunterStrategy()
+
+        # ── Hai strategy thường trực — switch theo target ──
+        #   • `_heavy_strategy`   : đòn mặc định cho mọi target không phải lính.
+        #   • `_soldier_strategy` : đòn AOE chuyên săn lính (splash 'aoe').
+        # Lý do tạo sẵn 2 instance: tránh allocation mỗi frame trong vòng
+        # lặp game; mỗi strategy có thể giữ state riêng nếu mở rộng sau này.
+        self._heavy_strategy   = HeavyStrikeStrategy()
+        # Splash AoE = tầm đánh (`_attack_range`) để teammate thấy
+        # "vùng cleave đồng bộ với tầm đánh". Khi balance chỉnh
+        # `_DEFAULT_ATTACK_RANGE`, splash cũng tự nới theo.
+        self._soldier_strategy = SoldierHunterStrategy(
+            splash_radius=self._attack_range,
+        )
+        # Khởi đầu = Heavy; update() sẽ switch khi nhìn thấy target soldier.
+        self._attack_strategy  = self._heavy_strategy
 
         self._direction         = 2
         self._is_moving         = False
@@ -1039,6 +1091,29 @@ class SoldierHunter(Titan):
         self._anim_timer        = 0.0
 
         self._sprite_sheet = None
+
+    def update(self, dt: float) -> None:
+        """Switch strategy theo loại target hiện tại, rồi delegate base.update.
+
+        Quy ước (theo yêu cầu balance):
+            • Target là lính (`entity_type == 'soldier'`)
+                → dùng SoldierHunterStrategy (AOE quanh lính, dtype='soldier'
+                  cho đòn chính, 'aoe' cho splash).
+            • Mọi target khác (tower, wall, commander, hq, titan…)
+                → fallback HeavyStrikeStrategy (×3.0, dtype='heavy').
+
+        Ai gọi:
+            Game loop mỗi frame. Base `Titan.update()` tự tìm target và tự
+            đánh — chúng ta chỉ đảm bảo `_attack_strategy` đã trỏ đúng
+            instance TRƯỚC khi base gọi `execute()` trên target.
+        """
+        target = getattr(self, '_target', None)
+        if target is not None and getattr(target, 'entity_type', '') == 'soldier':
+            self._attack_strategy = self._soldier_strategy
+        else:
+            self._attack_strategy = self._heavy_strategy
+
+        super().update(dt)
 
     def _load_sprite(self) -> None:
         if self._sprite_sheet is not None:
@@ -1149,11 +1224,11 @@ class Kamikaze(Titan):
     """
 
     # ── Tham số gameplay ─────────────────────────────────────────
-    _DEFAULT_HP              = 300
+    _DEFAULT_HP              = 1000
     _DEFAULT_SPEED           = 80.0
-    _DEFAULT_DAMAGE          = 50    # damage base (Explosion dùng cố định)
-    _DEFAULT_ATTACK_RANGE    = 80.0  # = _EXPLODE_RADIUS (khoảng kích nổ)
-    _DEFAULT_ATTACK_COOLDOWN = 1.5
+    _DEFAULT_DAMAGE          = 100    # damage base (Explosion dùng cố định)
+    _DEFAULT_ATTACK_RANGE    = 60.0  # = _EXPLODE_RADIUS (khoảng kích nổ)
+    _DEFAULT_ATTACK_COOLDOWN = 1.0
 
     # ── Sprite layout ────────────────────────────────────────────
     _SPRITE_FILE = 'kamikaze.png'
@@ -1166,26 +1241,28 @@ class Kamikaze(Titan):
     _IDLE_FPS    = 4
     _WALK_FRAMES = 9
     _RUN_FRAMES  = 8
-    _ANIM_FPS    = 6
+    _ANIM_FPS    = 10
 
     # ── Behavior radii ───────────────────────────────────────────
     _DETECT_RADIUS     = 300.0   # bán kính phát hiện soldier để chạy
-    _EXPLODE_RADIUS    = 80.0    # khi target vào đây → pause + explode
+    _EXPLODE_RADIUS    = 60.0    # khi target vào đây → pause + explode
     _CLUSTER_RADIUS    = 60.0    # đếm đồng đội quanh ứng viên target
-    _RUN_SPEED_MULT    = 1.5
-    _PRE_EXPLODE_PAUSE = 1.5     # giây pause trước khi nổ
+    _RUN_SPEED_MULT    = 2.0
+    _PRE_EXPLODE_PAUSE = 1.0     # giây pause trước khi nổ
 
     # ── Explosion params ─────────────────────────────────────────
-    _EXP_DAMAGE_MAIN   = 200
-    _EXP_DAMAGE_SPLASH = 100
+    # Damage main/splash KHÔNG còn khai báo ở đây — Explosion strategy tự
+    # scale theo `_DEFAULT_DAMAGE` (50) × `_DEFAULT_DAMAGE_MULT` (6.7) = 335.
+    # Splash mặc định = main × 0.5. Muốn đổi balance: chỉnh `_DEFAULT_DAMAGE`
+    # ở trên hoặc truyền `damage_mult=` / `splash_ratio=` khi khởi tạo Explosion.
     _EXP_AOE_RADIUS    = 80.0
-    _EXP_KNOCKBACK     = 60.0
+    _EXP_KNOCKBACK     = 80.0
+    _EXP_SPLASH_RATIO  = 0.75     # splash = main × ratio
 
     def __init__(self, x: float, y: float, config: dict = None) -> None:
         super().__init__(x, y, config)
         self._attack_strategy = Explosion(
-            damage_main=self._EXP_DAMAGE_MAIN,
-            damage_splash=self._EXP_DAMAGE_SPLASH,
+            splash_ratio=self._EXP_SPLASH_RATIO,
             radius=self._EXP_AOE_RADIUS,
             knockback=self._EXP_KNOCKBACK,
         )

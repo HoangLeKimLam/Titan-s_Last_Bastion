@@ -36,6 +36,8 @@ HERO_NAMES = ['Levi', 'Mikasa', 'Erwin', 'Armin', 'Jean', 'Sasha', 'Eren', 'Rein
 class SoldierDummy:
     """Lính bộ binh — 200 HP, di chuyển 0 (đứng yên trong demo)."""
 
+    entity_type = 'soldier'
+
     def __init__(self, x: float, y: float, hp: int = 200,
                  label: str = "Soldier") -> None:
         self.x = float(x)
@@ -45,6 +47,10 @@ class SoldierDummy:
         self.is_alive = True
         self._hit_flash = 0.0
         self._label = label
+        # Vector pushback (NHÓM 6 — Beast rock land). Khởi tạo 0 để
+        # `apply_pushback_tween` integrate được ngay frame đầu.
+        self.pushback_vx = 0.0
+        self.pushback_vy = 0.0
 
     def take_damage(self, amount: int, dtype: str) -> None:
         if amount > 0:
@@ -58,12 +64,23 @@ class SoldierDummy:
             self.is_alive = False
 
     def update(self, dt: float) -> None:
+        # Integrate vector pushback (Beast ném đá AOE) — phải gọi trước
+        # khi vẽ frame này để vị trí lính cập nhật mượt qua từng tick.
+        from AttackStrategy import RockProjectile
+        RockProjectile.apply_pushback_tween(self, dt)
         if self._hit_flash > 0:
             self._hit_flash = max(0.0, self._hit_flash - dt)
 
 
 class HeroDummy:
-    """Tướng (Hero) — 600 HP, không bị knockback, không bị stun."""
+    """Tướng (Hero/Commander) — 600 HP, KHÔNG miễn nhiễm pushback nữa.
+
+    Cập nhật: theo yêu cầu balance, commander BỊ pushback nhưng yếu hơn
+    soldier (~50%, được Beast cấu hình qua `_DEFAULT_PUSHBACK_COMMANDER`).
+    Hero vẫn miễn nhiễm stun (không có timer stun ở đây).
+    """
+
+    entity_type = 'commander'
 
     def __init__(self, x: float, y: float, name: str = "Hero",
                  hp: int = 600) -> None:
@@ -74,20 +91,25 @@ class HeroDummy:
         self.is_alive = True
         self._hit_flash = 0.0
         self.name = name
+        # Vector pushback — commander nhận pushback yếu hơn soldier.
+        self.pushback_vx = 0.0
+        self.pushback_vy = 0.0
 
     def take_damage(self, amount: int, dtype: str) -> None:
-        if dtype == 'pushback':
-            # Hero miễn nhiễm knockback
-            return
         if amount > 0:
             self._hp = max(0, self._hp - amount)
             print(f"  [Hero {self.name:7s}] take_damage({amount:>3}, '{dtype}')"
                   f"  → HP={self._hp}/{self._max_hp}")
+        elif dtype == 'pushback':
+            # Log dấu hiệu pushback (vector đã set qua attribute riêng).
+            print(f"  [Hero {self.name:7s}] take_damage(0, 'pushback')")
         self._hit_flash = 0.4
         if self._hp <= 0:
             self.is_alive = False
 
     def update(self, dt: float) -> None:
+        from AttackStrategy import RockProjectile
+        RockProjectile.apply_pushback_tween(self, dt)
         if self._hit_flash > 0:
             self._hit_flash = max(0.0, self._hit_flash - dt)
 

@@ -9,7 +9,7 @@ Mỗi Boss khai báo class constants:
     / _DEFAULT_ATTACK_COOLDOWN — như Titan thường.
 + Tham số kỹ năng riêng (cooldown, AoE, damage, animation duration):
     Colossal: _STEAM_COOLDOWN, _JUMP_COOLDOWN, _STEAM_PARTICLE_COUNT, ...
-    Beast   : _THROW_COOLDOWN, _ROCK_VELOCITY, _ROCK_AOE_RADIUS, ...
+    Beast   : _ROCK_VELOCITY, _ROCK_AOE_RADIUS, ... (range/cooldown gộp về _DEFAULT_*)
     Founding: _SUMMON_WAVE_COOLDOWN, _SUMMON_TOTAL, _P1_HP_RATIO, ...
 
 Tất cả tham số có thể override qua `config` dict truyền vào `__init__`,
@@ -68,10 +68,10 @@ class ColossalTitan(Titan):
     """
 
     # ── Tham số gameplay ─────────────────────────────────────────
-    _DEFAULT_HP              = 2000
-    _DEFAULT_SPEED           = 35.0     # to → đi chậm
-    _DEFAULT_DAMAGE          = 50
-    _DEFAULT_ATTACK_RANGE    = 120.0    # GroundSlam có radius
+    _DEFAULT_HP              = 5000
+    _DEFAULT_SPEED           = 50.0     # to → đi chậm
+    _DEFAULT_DAMAGE          = 150
+    _DEFAULT_ATTACK_RANGE    = 40.0    # GroundSlam có radius
     _DEFAULT_ATTACK_COOLDOWN = 2.0
 
     # ── Sprite mapping ───────────────────────────────────────────
@@ -89,23 +89,23 @@ class ColossalTitan(Titan):
     _ATTACK_FPS    = 24                  # nhanh — 0.25s/đòn vung tay
 
     # ── Skill 1: Steam Burst ─────────────────────────────────────
-    _STEAM_AOE              = 120        # tham chiếu HUD (không dùng damage)
+    _STEAM_AOE              = 150        # tham chiếu HUD (không dùng damage)
     _STEAM_R_IN             = 40         # bán kính trong annulus
     _STEAM_R_OUT            = 140        # bán kính ngoài annulus
     _STEAM_PARTICLE_COUNT   = 200        # N particle chia đều quanh vòng
-    _STEAM_PARTICLE_AOE     = 35         # bán kính damage tại mỗi spawn point
-    _STEAM_FIRE_DMG         = 15         # damage lính khi bị steam
-    _STEAM_BURN_DMG         = 15         # damage tướng khi bị steam
+    _STEAM_PARTICLE_AOE     = 50         # bán kính damage tại mỗi spawn point
+    _STEAM_FIRE_DMG         = 100         # damage lính khi bị steam
+    _STEAM_BURN_DMG         = 150         # damage tướng khi bị steam
     _STEAM_COOLDOWN         = 8.0
     _STEAM_ANIM_DUR         = 3.0
-    _BURN_DPS               = 5.0
+    _BURN_DPS               = 50.0
     _BURN_DURATION          = 5.0
 
     # ── Skill 2: Jump Stomp ──────────────────────────────────────
     _STOMP_AOE              = 160
     _STOMP_STUN_DUR         = 3.5
-    _STOMP_DMG              = 100
-    _JUMP_COOLDOWN          = 15.0
+    _STOMP_DMG              = 300
+    _JUMP_COOLDOWN          = 10.0
     _JUMP_ANIM_DUR          = 1.5
 
     def __init__(self, x: float, y: float, config: dict = None) -> None:
@@ -369,13 +369,14 @@ class BeastTitan(Titan):
     """Boss màn 4 — ném đá tầm xa, ưu tiên phá tháp trước khi tiến vào HQ.
 
     Skill ném đá (`trigger_attack(target)`):
-      • Range: `_THROW_RANGE` (ngoài tầm → walk lại gần)
+      • Range: `_DEFAULT_ATTACK_RANGE` (ngoài tầm → walk lại gần;
+                instance đọc `self._attack_range`, alias public `self.THROW_RANGE`)
       • Vật lý: velocity adaptive, angle `_ROCK_ANGLE_DEG`, gravity `_ROCK_GRAVITY`
       • Visual đá: spritesheet Rock Pile (frame 85×85 tại row=9, col=5)
       • Tay phát sinh: `_HAND_OFFSET` + `_HAND_LIFT` px
       • Release tại frame `_ROCK_RELEASE_FRAME`/6 (~0.125s)
       • Damage AoE `_ROCK_AOE_RADIUS` px khi rock land: main + splash, dtype='rock'
-      • Cooldown `_THROW_COOLDOWN` giây
+      • Cooldown `_DEFAULT_ATTACK_COOLDOWN` giây (instance `self._attack_cooldown`)
 
     Adaptive velocity (`_release_rock`): tính v theo công thức parabol
     `v = sqrt(R · g / sin(2θ))` để đáp đúng target, clamp [`_ROCK_VELOCITY_MIN`,
@@ -386,11 +387,18 @@ class BeastTitan(Titan):
     """
 
     # ── Tham số gameplay ─────────────────────────────────────────
-    _DEFAULT_HP              = 1500
+    # GỘP: trước đây có 4 biến cho cùng concept "tầm ném đá":
+    #   `_DEFAULT_ATTACK_RANGE` (base) / `_THROW_RANGE` / `THROW_RANGE`
+    #   (alias public) / `self._attack_range` (instance).
+    # Giờ chỉ giữ `_DEFAULT_ATTACK_RANGE` làm nguồn duy nhất; instance
+    # attr `self._attack_range` (set bởi Titan base.__init__ từ config)
+    # là biến đọc khi cần — cho phép spawn override range qua config.
+    # Tương tự với `_DEFAULT_ATTACK_COOLDOWN` (gộp `_THROW_COOLDOWN`).
+    _DEFAULT_HP              = 7500
     _DEFAULT_SPEED           = 50.0
-    _DEFAULT_DAMAGE          = 40
-    _DEFAULT_ATTACK_RANGE    = 350.0    # = _THROW_RANGE
-    _DEFAULT_ATTACK_COOLDOWN = 2.0      # đồng nhất _THROW_COOLDOWN
+    _DEFAULT_DAMAGE          = 175
+    _DEFAULT_ATTACK_RANGE    = 350.0    # tầm ném đá (px) — ngoài tầm thì walk lại gần
+    _DEFAULT_ATTACK_COOLDOWN = 2.0      # giây giữa 2 lần ném đá
 
     # ── Sprite layout ────────────────────────────────────────────
     _SPRITE_FILE   = 'beast.png'
@@ -405,18 +413,22 @@ class BeastTitan(Titan):
     _ATTACK_FPS    = 24      # nhanh — 0.25s/đòn ném
 
     # ── Skill ném đá ─────────────────────────────────────────────
-    _THROW_RANGE          = 350.0
-    THROW_RANGE           = _THROW_RANGE   # alias public cho AI/demo
-    _THROW_COOLDOWN       = 2.0
+    # Range/Cooldown đã chuyển sang `_DEFAULT_ATTACK_RANGE`/`_COOLDOWN` ở trên.
+    # `self.THROW_RANGE` (instance attr) được set trong __init__ làm alias
+    # public cho file AI.py + CHECK/CHECKAI đang đọc `beast.THROW_RANGE`.
     _ROCK_VELOCITY        = 580.0    # fallback nếu công thức adaptive fail
     _ROCK_VELOCITY_MIN    = 200.0
     _ROCK_VELOCITY_MAX    = 800.0
     _ROCK_ANGLE_DEG       = 15.0
     _ROCK_GRAVITY         = 600.0
-    _ROCK_DAMAGE_MAIN     = 80
-    _ROCK_DAMAGE_SPLASH   = 40
-    _ROCK_AOE_RADIUS      = 80.0
-    _ROCK_KNOCKBACK       = 40.0
+    _ROCK_DAMAGE_MAIN     = 175
+    _ROCK_DAMAGE_SPLASH   = 125
+    _ROCK_AOE_RADIUS      = 100.0
+    # Pushback (đẩy lùi) khi rock land — đẩy soldier/commander theo hướng
+    # NGẪU NHIÊN trong nửa mặt phẳng đối diện Beast, falloff theo khoảng cách.
+    # Commander đẩy ÍT hơn (~50% soldier) vì hero "nặng" hơn lính.
+    _DEFAULT_PUSHBACK_SOLDIER   = 100.0   # max distance khi soldier ở tâm điểm rơi (px)
+    _DEFAULT_PUSHBACK_COMMANDER = 50.0    # max distance khi commander ở tâm điểm rơi (px)
     _ROCK_RELEASE_FRAME   = 3
     _HAND_OFFSET          = 24.0
     _HAND_LIFT            = 12.0
@@ -429,8 +441,12 @@ class BeastTitan(Titan):
 
     def __init__(self, x: float, y: float, config: dict = None) -> None:
         super().__init__(x, y, config)
+        # Alias public — giữ backward-compat cho AI.py + CHECK/CHECKAI đang
+        # đọc `beast.THROW_RANGE` (instance attr, không phải class const).
+        # Trỏ thẳng vào `_attack_range` đã được Titan base set từ config.
+        self.THROW_RANGE     = self._attack_range
         self._throw_timer    = 0.0
-        self._throw_cooldown = self._THROW_COOLDOWN
+        self._throw_cooldown = self._attack_cooldown    # = _DEFAULT_ATTACK_COOLDOWN
 
         self._direction         = 2
         self._is_moving         = False
@@ -580,7 +596,10 @@ class BeastTitan(Titan):
             damage_main=self._ROCK_DAMAGE_MAIN,
             damage_splash=self._ROCK_DAMAGE_SPLASH,
             aoe_radius=self._ROCK_AOE_RADIUS,
-            knockback_dist=self._ROCK_KNOCKBACK,
+            pushback_soldier=self._DEFAULT_PUSHBACK_SOLDIER,
+            pushback_commander=self._DEFAULT_PUSHBACK_COMMANDER,
+            beast_x=self.x,
+            beast_y=self.y,
         )
         self._rocks.append(rock)
 
@@ -626,7 +645,7 @@ class BeastTitan(Titan):
             return
 
         dist = self._distance_to(nearest_tower)
-        if dist <= self._THROW_RANGE:
+        if dist <= self._attack_range:    # = _DEFAULT_ATTACK_RANGE (gộp từ _THROW_RANGE)
             self._is_moving = False
             if self._throw_timer <= 0:
                 if self.trigger_attack(nearest_tower):
@@ -678,11 +697,16 @@ class FoundingTitan(Titan):
     """
 
     # ── Tham số gameplay ─────────────────────────────────────────
-    _DEFAULT_HP              = 800     # thấp hơn game thật để dễ test phase
+    _DEFAULT_HP              = 10000     # thấp hơn game thật để dễ test phase
     _DEFAULT_SPEED           = 50.0
-    _DEFAULT_DAMAGE          = 50
-    _DEFAULT_ATTACK_RANGE    = 80.0   # = _ATTACK_RANGE
-    _DEFAULT_ATTACK_COOLDOWN = 3.0    # = _ATTACK_COOLDOWN
+    _DEFAULT_DAMAGE          = 200
+    # GỘP: trước đây Founding có thêm `_ATTACK_RANGE` và `_ATTACK_COOLDOWN`
+    # (không có tiền tố `_DEFAULT_`) trùng giá trị + trùng nghĩa với 2 hằng
+    # dưới. Đã xóa cặp đó; mọi nơi đọc `self._ATTACK_RANGE`/`_COOLDOWN` đổi
+    # sang instance attr `self._attack_range`/`self._attack_cooldown` (Titan
+    # base set từ config — cho phép spawn override qua `config={'attack_range':…}`).
+    _DEFAULT_ATTACK_RANGE    = 40.0   # tầm đánh Phase 1/3 — HeavyStrike melee
+    _DEFAULT_ATTACK_COOLDOWN = 3.0    # giây giữa 2 đòn HeavyStrike
 
     # ── Sprite layout — KHÔNG có Run ─────────────────────────────
     _SPRITE_FILE   = 'founding.png'
@@ -699,12 +723,12 @@ class FoundingTitan(Titan):
     _SUMMON_PAUSE  = 2.0
 
     # ── Phase / HP thresholds ────────────────────────────────────
-    _P1_HP_RATIO   = 0.6           # > 0.6 = P1
-    _P3_HP_RATIO   = 0.2           # ≤ 0.2 = P3 (sticky)
+    _P1_HP_RATIO   = 0.8           # > 0.6 = P1
+    _P3_HP_RATIO   = 0.3           # ≤ 0.2 = P3 (sticky)
 
     # ── Phase 1 attack ───────────────────────────────────────────
-    _ATTACK_RANGE    = 80.0
-    _ATTACK_COOLDOWN = 3.0
+    # Range/Cooldown đã chuyển sang `_DEFAULT_ATTACK_RANGE`/`_COOLDOWN` ở trên;
+    # code dùng `self._attack_range` / `self._attack_cooldown` (instance attr).
 
     # ── Phase 2 summon ───────────────────────────────────────────
     _SUMMON_TOTAL         = 10
@@ -789,7 +813,8 @@ class FoundingTitan(Titan):
     def trigger_attack(self, target=None) -> bool:
         """Phase 1/3 attack — HeavyStrike. LUÔN chạy animation.
 
-        Damage CHỈ áp khi target hợp lệ và trong `_ATTACK_RANGE`.
+        Damage CHỈ áp khi target hợp lệ và trong `self._attack_range`
+        (= _DEFAULT_ATTACK_RANGE, đọc qua instance để config override được).
         """
         if self._is_attacking or self._is_summoning:
             return False
@@ -800,7 +825,7 @@ class FoundingTitan(Titan):
         self._attack_anim_timer = self._ATTACK_FRAMES / self._ATTACK_FPS
         self._anim_col          = 0
         self._anim_timer        = 0.0
-        self._attack_cd_timer   = self._ATTACK_COOLDOWN
+        self._attack_cd_timer   = self._attack_cooldown
 
         if target is not None:
             dx, dy = target.x - self.x, target.y - self.y
@@ -811,7 +836,7 @@ class FoundingTitan(Titan):
 
         if (target is not None
                 and getattr(target, 'is_alive', True)
-                and self._distance_to(target) <= self._ATTACK_RANGE):
+                and self._distance_to(target) <= self._attack_range):
             self._attack_strategy.execute(self, target)
 
         return True
@@ -982,10 +1007,10 @@ class FoundingTitan(Titan):
             self._is_moving = False
             return
         dist = self._distance_to(target)
-        if dist <= self._ATTACK_RANGE and self._attack_cd_timer <= 0:
+        if dist <= self._attack_range and self._attack_cd_timer <= 0:
             self._is_moving = False
             self.trigger_attack(target)
-        elif dist > self._ATTACK_RANGE:
+        elif dist > self._attack_range:
             self._is_moving = True
             self._move_toward(target, dt)
 

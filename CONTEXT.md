@@ -101,7 +101,7 @@ Singleton. Các event chuẩn:
 | AberrantTitan | MeleeRushStrategy(mult=1.2) | Dash mỗi 4s — speed ×3 tạm thời |
 | Wolf | Incurable | Thân nhỏ giống sói, cắn truyền `dtype='antiheal'` (damage ×0.8); sprite cố định `Assets/Titan/wolf.png`; không switch strategy |
 | TowerHunter | TowerHunterStrategy | Công thành: ×1.5 damage nếu target là `Tower` (isinstance check); dtype='siege'; sprite cố định `Assets/Titan/towerhunter.png`; không switch strategy |
-| SoldierHunter | SoldierHunterStrategy | Săn lính AoE: main target ×1.0 + soldier trong splash 60px ×0.5; sprite `Assets/Titan/soldierhunter.png` **kích thước đặc biệt** (walk/run 64×64, attack 192×192) |
+| SoldierHunter | SoldierHunterStrategy | Cleave AoE quanh ATTACKER (`radius = _attack_range`, mặc định 40px); trúng MỌI entity (soldier + commander + tower + wall + hq) với splash 50% main; sprite `Assets/Titan/soldierhunter.png` **kích thước đặc biệt** (walk/run 64×64, attack 192×192) |
 | Kamikaze | Explosion | Suicide bomber: detect 300px → chạy 1.5× tốc về soldier (clustering pick) → vào 80px → pause 1.5s flash đỏ → nổ AoE (main 200 + splash 100 + knockback 60px). Chết trước nổ vẫn nổ. Sprite `Assets/Special/kamikaze.png` |
 
 ### Bosses ([Boss.py](./Boss.py))
@@ -126,7 +126,7 @@ Singleton. Các event chuẩn:
 | GroundSlamStrategy(radius, stun) | AoE damage `stomp` + stun tháp |
 | Explosion(main, splash, radius, knockback) | AoE quanh attacker (không phải target); main + splash damage dtype='explode' + knockback ra xa attacker |
 | TowerHunterStrategy(bonus=1.5, dtype='siege') | x1.5 damage nếu target là Tower (isinstance check) |
-| SoldierHunterStrategy(splash=60, splash_mult=0.5) | Splash 50% damage lên lính trong 60px quanh target |
+| SoldierHunterStrategy(splash_radius=attack_range, splash_mult=0.5) | Cleave 360° quanh ATTACKER: main ×1.0 lên target chính + splash 50% lên mọi entity (soldier/commander/tower/wall/hq) trong vùng |
 
 Đặc trưng: **đổi strategy = đổi cách đánh, không sửa Titan**. Có thể switch runtime (berserk, vỡ giáp).
 
@@ -564,9 +564,9 @@ Demo mock `structures.towers.tower.Tower = _MockTower` trước khi import Strat
 - `AttackStrategy.py` — class `TowerHunterStrategy` (NHÓM 5: Mục tiêu đặc biệt) — đã sửa default mult=1.5, dtype='siege'
 - `towerhuntercheck.py` — demo độc lập với mock (mock cả `structures.towers.tower`)
 
-## 15. SoldierHunter — Walk / Run / Cleave (splash AoE 60 px)
+## 15. SoldierHunter — Walk / Run / Cleave (splash AoE = attack_range, đa loại)
 
-SoldierHunter là Titan to xác cầm lưỡi hiểm — chuyên săn lính, gây splash AoE quanh target chính. Luôn dùng `SoldierHunterStrategy` cố định, **không** switch theo HP.
+SoldierHunter là Titan to xác cầm lưỡi hiểm — chuyên săn lính, gây cleave AoE quanh ATTACKER (vung 360° = `_attack_range`), trúng MỌI loại entity. Mặc định dùng `HeavyStrikeStrategy` và switch sang `SoldierHunterStrategy` khi target là `soldier` (xem `Titan.SoldierHunter.update`).
 
 ### Spritesheet SoldierHunter — kích thước ĐẶC BIỆT
 
@@ -600,26 +600,44 @@ User gọi 4 hàng attack là "hàng 55, 56, 57, 58" (1-indexed, đếm theo vù
 _ATTACK_Y = {0: 3456, 1: 3648, 2: 3840, 3: 4032}
 ```
 
-### Strategy — SoldierHunterStrategy
+### Strategy — SoldierHunterStrategy (cập nhật NHÓM 5)
 
 Định nghĩa trong [AttackStrategy.py](./AttackStrategy.py):
 
 ```python
 class SoldierHunterStrategy(TitanAttackStrategy):
-    def __init__(self, splash_radius: float = 60, splash_mult: float = 0.5):
+    _DEFAULT_DAMAGE_MULT = 3.0
+    _DEFAULT_DTYPE       = 'soldier'
+    _SPLASH_ENTITY_TYPES = ('soldier', 'commander', 'tower', 'wall', 'hq')
+
+    def __init__(self, damage_mult=None, dtype=None,
+                 splash_radius: float = 120.0,
+                 splash_mult: float = 0.5,
+                 splash_dtype: str = 'aoe'):
         ...
     def execute(self, attacker, target):
-        target.take_damage(amount=attacker._damage, dtype='normal')
-        from systems.world_query import WorldQuery
-        splash = WorldQuery.find_in_radius(target.x, target.y, splash_radius, 'soldier')
-        for s in splash:
-            if s is not target:
-                s.take_damage(int(attacker._damage * splash_mult), dtype='aoe')
+        base = self.compute_damage(attacker)
+        target.take_damage(amount=base, dtype=self._dtype)
+        # Cleave: quét MỌI loại entity trong _splash_radius quanh ATTACKER.
+        splash_dmg = int(base * self._splash_mult)
+        seen = {id(target)}
+        for etype in self._SPLASH_ENTITY_TYPES:
+            for e in WorldQuery.find_in_radius(
+                    attacker.x, attacker.y, self._splash_radius, etype):
+                if id(e) in seen: continue
+                seen.add(id(e))
+                e.take_damage(amount=splash_dmg, dtype=self._splash_dtype)
 ```
 
-- **Target chính** → damage ×1.0, dtype='normal'
-- **Soldiers trong splash 60 px quanh target** (không phải quanh attacker) → damage ×0.5, dtype='aoe'
-- Loose coupling qua `WorldQuery.find_in_radius` — demo mock module này.
+- **Target chính** → damage = `attacker._damage × 3.0`, dtype='soldier'.
+- **Mọi entity trong vùng cleave quanh ATTACKER** (radius = `_splash_radius`,
+  mặc định khi SoldierHunter khởi tạo = `self._attack_range` ≈ 40px) →
+  damage ×0.5, dtype='aoe'. Bao gồm: soldier + commander + tower + wall + hq.
+- Tự loại trừ target chính khỏi splash (`seen` set chứa `id(target)` từ đầu)
+  → không trừ máu 2 lần.
+- Loose coupling qua `WorldQuery.find_in_radius(cx, cy, radius, entity_type)` —
+  world phải hỗ trợ đủ 5 entity_type. Loại nào chưa có → `find_in_radius`
+  trả list rỗng → strategy bỏ qua, an toàn.
 
 ### Anchor / Draw đặc biệt
 
@@ -652,7 +670,7 @@ Hit feedback: dummy **flash đỏ** khi nhận `dtype='normal'`, **flash cam** k
 ### File tham chiếu
 
 - `Titan.py` — class `SoldierHunter` (cuối file)
-- `AttackStrategy.py` — class `SoldierHunterStrategy` (NHÓM 5) — đã sửa default splash_radius=60
+- `AttackStrategy.py` — class `SoldierHunterStrategy` (NHÓM 5) — cleave quanh ATTACKER, trúng mọi entity_type, mặc định `splash_radius=120` (override = `attack_range` khi SoldierHunter khởi tạo)
 - `soldierhuntercheck.py` — demo độc lập với mock (mock WorldQuery.find_in_radius bằng list dummy)
 
 ## 16. BeastTitan — Walk / Run / Throw Rock (parabolic arc + AoE)
@@ -952,27 +970,30 @@ Setup: 10 soldier random scatter trong nửa phải màn hình, mỗi con HP 150
 
 ## 19. Beast Rock — Knockback rule + Demo entity layout chuẩn
 
-### Knockback rule (Beast rock)
+### Pushback rule (Beast rock) — cập nhật
 
-`RockProjectile._on_land()` (AttackStrategy.py) khi đá rơi xuống:
+`RockProjectile._on_land()` (AttackStrategy.py) khi đá rơi:
 
-| Loại entity | Main damage (target chính) | Splash damage (trong AoE 80px) | Knockback |
-|-------------|---------------------------|--------------------------------|-----------|
-| Soldier     | 80                        | 40                             | **40 px** (đẩy ra xa điểm rơi) |
-| Hero/Commander | 80                     | 40                             | **KHÔNG** (miễn nhiễm) |
-| Tower       | 80                        | 40                             | **KHÔNG** (cố định) |
+| Loại entity     | Main damage | Splash (AoE 100px) | Pushback MAX (tại tâm) | Hướng                                  |
+|-----------------|-------------|--------------------|------------------------|----------------------------------------|
+| Soldier         | 175         | 125                | **100 px**             | Random nửa mặt phẳng đối diện Beast    |
+| Commander       | 175         | 125                | **50 px** (~50% lính)  | Random nửa mặt phẳng đối diện Beast    |
+| Tower / Wall / HQ | 175       | 125                | **KHÔNG** (cố định)    | —                                      |
 
-- `RockProjectile.__init__(..., knockback_dist=40.0)` — tham số mới
-- `BeastTitan._ROCK_KNOCKBACK = 40.0` — class constant truyền vào projectile
-- Cơ chế: `take_damage(0, 'pushback')` được gọi như tín hiệu phụ sau khi đẩy; `HeroDummy`/`TowerDummy` chặn dtype='pushback' trong `take_damage` để không log/phản ứng.
+- `BeastTitan._DEFAULT_PUSHBACK_SOLDIER = 100.0`, `_DEFAULT_PUSHBACK_COMMANDER = 50.0` — 2 hằng số tách biệt thay cho `_ROCK_KNOCKBACK` cũ.
+- `RockProjectile.__init__(..., pushback_soldier, pushback_commander, beast_x, beast_y)`. `beast_x/y` để loại hướng pushback về phía Beast.
+- **Falloff tuyến tính** theo khoảng cách: `push = max × (1 - dist / aoe_radius)`.
+- **Hướng**: rejection sampling random angle, loại hướng có `dot(dir, beast→điểm rơi) < 0`. Beast ở W của điểm rơi → soldier/commander chỉ bị đẩy về E/N/S, không bao giờ về W.
+- **Cơ chế tween** (không teleport): set `entity.pushback_vx/vy`, entity tự decay trong `update()` qua `RockProjectile.apply_pushback_tween(self, dt)`. Decay rate `_PUSHBACK_DECAY = 5/s` ⇒ ~0.6–1s là dứt.
+- `take_damage(0, 'pushback')` vẫn là tín hiệu phụ cho HUD/log, **không còn được dùng làm cờ miễn nhiễm**. Tower/Wall/HQ tự bị bỏ qua trong `_on_land` (không vào nhánh push), không cần chặn dtype.
 
 ### `_demo_dummies.py` — Helper entity chuẩn cho mọi `*check.py`
 
 File `_demo_dummies.py` cung cấp pattern phân phối đồng nhất:
 
 - **`SoldierDummy(x, y, hp=200, label)`** — circle xanh r=14, có HP bar
-- **`HeroDummy(x, y, name, hp=600)`** — circle xanh-vàng r=18, viền dày, hiển thị tên (Levi/Mikasa/Erwin/Armin/Jean/Sasha/Eren/Reiner); miễn nhiễm `'pushback'` dtype
-- **`TowerDummy(x, y, label, hp=800)`** — square 40×40 xám, HP bar; miễn nhiễm `'pushback'`; có `stun(duration)`
+- **`HeroDummy(x, y, name, hp=600)`** — circle xanh-vàng r=18, viền dày, hiển thị tên (Levi/Mikasa/Erwin/Armin/Jean/Sasha/Eren/Reiner). `entity_type='commander'`, có `pushback_vx/vy` + integrate tween trong `update()` (nhận pushback ~50% soldier).
+- **`TowerDummy(x, y, label, hp=800)`** — square 40×40 xám, HP bar, có `stun(duration)`. Không bao giờ bị Beast đẩy (loại trong `_on_land`).
 
 **`spawn_world(W, H, titan_x, titan_y, seed=None) → (soldiers, heroes, towers)`** sinh:
 - **10 soldier**: 5 **CỤM** quanh 1 anchor random (radius 60px) + 5 **RANDOM** toàn map

@@ -21,7 +21,7 @@ class ArmoredTitanAICheck(AICheckApp):
 
     def create_titan(self):
         return ArmoredTitan(self.spawn_x, self.spawn_y, {
-            'hp': 1000, 'speed': 100.0, 'damage': 25,
+            'hp': 1000, 'speed': 100.0, 'damage': 100,
         })
 
     def title(self) -> str:

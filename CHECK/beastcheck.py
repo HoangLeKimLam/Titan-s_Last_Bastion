@@ -220,6 +220,8 @@ class TowerDummy:
 
 
 class SoldierDummy:
+    entity_type = 'soldier'
+
     def __init__(self, x: float, y: float, hp: int = 200):
         self.x = float(x)
         self.y = float(y)
@@ -227,6 +229,10 @@ class SoldierDummy:
         self._max_hp = hp
         self.is_alive = True
         self._hit_flash = 0.0
+        # Vector pushback (NHÓM 6 — Beast rock land). Khởi tạo 0 để
+        # `apply_pushback_tween` integrate được từ frame đầu.
+        self.pushback_vx = 0.0
+        self.pushback_vy = 0.0
 
     def take_damage(self, amount: int, dtype: str) -> None:
         self._hp = max(0, self._hp - amount)
@@ -237,6 +243,10 @@ class SoldierDummy:
             self.is_alive = False
 
     def update(self, dt: float) -> None:
+        # Integrate vector pushback (nếu có) — gọi đầu update để vị trí
+        # cập nhật ngay trước khi vẽ frame này.
+        from AttackStrategy import RockProjectile
+        RockProjectile.apply_pushback_tween(self, dt)
         if self._hit_flash > 0:
             self._hit_flash = max(0.0, self._hit_flash - dt)
 

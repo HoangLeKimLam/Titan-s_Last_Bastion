@@ -54,6 +54,12 @@ class TargetEntity(ABC):
         self.is_alive   = True
         self._label     = label or type(self).__name__
         self._hit_flash = 0.0     # giây nháy đỏ còn lại khi trúng đòn
+        # Vector pushback (NHÓM 6 — Beast rock land). Khởi tạo 0 cho mọi
+        # entity (kể cả HQ/Wall/Tower) để `apply_pushback_tween` integrate
+        # an toàn — riêng những entity Beast KHÔNG đẩy (tower/wall/hq)
+        # thì vector này không bao giờ được set khác 0.
+        self.pushback_vx = 0.0
+        self.pushback_vy = 0.0
 
     # ── Nhận damage ──────────────────────────────────────────────
 
@@ -72,8 +78,16 @@ class TargetEntity(ABC):
     # ── Cập nhật mỗi frame ───────────────────────────────────────
 
     def update(self, dt: float) -> None:
-        """Giảm timer nháy đỏ. Class con override để thêm hành vi
-        (vd Tower bắn titan) nhưng nên gọi super().update(dt)."""
+        """Giảm timer nháy đỏ + integrate vector pushback (nếu có).
+
+        Class con override để thêm hành vi (vd Tower bắn titan) nhưng
+        BẮT BUỘC gọi `super().update(dt)` để pushback tween chạy.
+        """
+        # Tween pushback — gọi đầu update để vị trí cập nhật trước khi
+        # vẽ frame này. Lazy import tránh vòng tròn import giữa
+        # _ai_dummies và AttackStrategy.
+        from AttackStrategy import RockProjectile
+        RockProjectile.apply_pushback_tween(self, dt)
         if self._hit_flash > 0.0:
             self._hit_flash = max(0.0, self._hit_flash - dt)
 
@@ -333,8 +347,12 @@ class SoldierDummy(AttackerEntity):
 class CommanderDummy(AttackerEntity):
     """Tướng (entity_type='commander').
 
-    Bắn Titan mạnh hơn lính. Miễn nhiễm knockback (dtype='pushback').
-    Vẽ vòng tròn xanh lớn có viền vàng + tên.
+    Bắn Titan mạnh hơn lính. Vẽ vòng tròn xanh lớn có viền vàng + tên.
+
+    Pushback (NHÓM 6 — Beast):
+        Cập nhật balance: Commander **BỊ pushback nhưng yếu hơn soldier**
+        (~50%), được Beast cấu hình qua `_DEFAULT_PUSHBACK_COMMANDER`.
+        Trước đây Commander miễn nhiễm hoàn toàn — không còn đúng nữa.
     """
 
     entity_type = 'commander'
@@ -345,12 +363,6 @@ class CommanderDummy(AttackerEntity):
                          attack_range=170.0, attack_damage=14,
                          attack_cooldown=1.0, label=name)
         self.name = name
-
-    def take_damage(self, amount: int, dtype: str = 'normal') -> None:
-        """Miễn nhiễm knockback — bỏ qua tín hiệu 'pushback'."""
-        if dtype == 'pushback':
-            return
-        super().take_damage(amount, dtype)
 
     def draw(self, screen: pygame.Surface, font) -> None:
         if not self.is_alive:

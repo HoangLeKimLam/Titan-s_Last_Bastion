@@ -121,7 +121,7 @@ class HeavyStrikeStrategy(TitanAttackStrategy):
     RegularTitan khi HP < 40%.
     """
 
-    _DEFAULT_DAMAGE_MULT = 3.0
+    _DEFAULT_DAMAGE_MULT = 3.5
     _DEFAULT_DTYPE       = 'heavy'
 
     def execute(self, attacker, target: IAttackable):
@@ -197,7 +197,7 @@ class GroundSlamStrategy(TitanAttackStrategy):
     và gọi `tower.stun(stun_duration)`.
     """
 
-    _DEFAULT_DAMAGE_MULT = 1.0
+    _DEFAULT_DAMAGE_MULT = 4.0
     _DEFAULT_DTYPE       = 'stomp'
 
     def __init__(self, damage_mult: float = None, dtype: str = None,
@@ -224,17 +224,23 @@ class Explosion(TitanAttackStrategy):
     Khác các strategy khác:
       • Center damage là tại vị trí `attacker` (KHÔNG phải target).
       • Target chính (locked soldier) ăn `damage_main`, soldier khác
-        trong AoE ăn `damage_splash`.
+        trong AoE ăn `damage_splash` (theo `splash_ratio`).
       • Knockback: mỗi soldier bị đẩy ra xa khỏi attacker `knockback` px.
       • dtype='explode' để target/decorator có thể xử lý (vd particle effect).
 
-    Damage CỐ ĐỊNH (không nhân `attacker._damage`) — vì là damage AoE
-    chuyên biệt, balance theo bộ skill, không scale theo damage base.
-    Vẫn override _DEFAULT_DAMAGE_MULT = 0 để báo "không dùng compute_damage".
+    Cách tính damage (đã đồng nhất với pattern chung):
+        main   = int(attacker._damage × _DEFAULT_DAMAGE_MULT)   # qua compute_damage
+        splash = int(main × splash_ratio)
+
+    Vì sao đổi sang dùng `compute_damage`?
+        Trước đây Explosion truyền damage CỐ ĐỊNH (main=200, splash=100),
+        bỏ qua `_damage` của attacker và `_DEFAULT_DAMAGE_MULT` — phá vỡ
+        quy ước Strategy Pattern (mọi đòn đánh đều scale theo
+        `attacker._damage × mult`). Giờ Kamikaze chỉnh `_DEFAULT_DAMAGE`
+        ở class là toàn bộ Explosion scale theo, không cần đụng strategy.
 
     Tham số:
-        damage_main   : damage cho target chính (locked soldier)
-        damage_splash : damage cho các soldier khác trong AoE
+        splash_ratio  : tỷ lệ damage splash so với main (0.5 = splash bằng nửa)
         radius        : bán kính AoE quanh attacker
         knockback     : số px đẩy soldier ra xa khỏi attacker
 
@@ -242,20 +248,24 @@ class Explosion(TitanAttackStrategy):
     on_death() vì đã 'phát nổ'.
     """
 
-    _DEFAULT_DAMAGE_MULT = 5.0   # không dùng compute_damage; damage cố định
+    _DEFAULT_DAMAGE_MULT = 6.7
     _DEFAULT_DTYPE       = 'explode'
 
     def __init__(self, damage_mult: float = None, dtype: str = None,
-                 damage_main: int = 200, damage_splash: int = 100,
+                 splash_ratio: float = 0.5,
                  radius: float = 80.0, knockback: float = 60.0) -> None:
         super().__init__(damage_mult, dtype)
-        self._damage_main   = damage_main
-        self._damage_splash = damage_splash
-        self._radius        = radius
-        self._knockback     = knockback
+        self._splash_ratio = splash_ratio
+        self._radius       = radius
+        self._knockback    = knockback
 
     def execute(self, attacker, target: IAttackable):
         from systems.world_query import WorldQuery
+        # Damage main scale theo attacker._damage × _mult (Strategy chuẩn).
+        # Splash = main × splash_ratio để giữ tỷ lệ tương đối với main.
+        damage_main   = self.compute_damage(attacker)
+        damage_splash = int(damage_main * self._splash_ratio)
+
         nearby = WorldQuery.find_in_radius(
             attacker.x, attacker.y, self._radius, 'soldier')
         for s in nearby:
@@ -263,9 +273,9 @@ class Explosion(TitanAttackStrategy):
                 continue
             # Damage: target chính ×main, khác ×splash
             if s is target:
-                s.take_damage(amount=self._damage_main, dtype=self._dtype)
+                s.take_damage(amount=damage_main, dtype=self._dtype)
             else:
-                s.take_damage(amount=self._damage_splash, dtype=self._dtype)
+                s.take_damage(amount=damage_splash, dtype=self._dtype)
             # Knockback: push out theo vector (s - attacker) đã chuẩn hoá
             dx = s.x - attacker.x
             dy = s.y - attacker.y
@@ -289,7 +299,7 @@ class TowerHunterStrategy(TitanAttackStrategy):
     áp resistance/weakness riêng nếu cần.
     """
 
-    _DEFAULT_DAMAGE_MULT = 1.0
+    _DEFAULT_DAMAGE_MULT = 3.0
     _DEFAULT_DTYPE       = 'siege'
 
     def __init__(self, damage_mult: float = None, dtype: str = None,
@@ -310,24 +320,44 @@ class TowerHunterStrategy(TitanAttackStrategy):
 
 
 class SoldierHunterStrategy(TitanAttackStrategy):
-    """Chuyên săn lính — AoE quanh mục tiêu chính.
+    """Chuyên săn lính — cleave AoE quanh ATTACKER, trúng mọi loại entity.
     Nhóm dùng: SoldierHunter — Titan gây chaos hàng thủ, không quan tâm tường.
 
-    Damage:
-        • Target chính → damage = `attacker._damage × _mult`, dtype='normal'
-        • Mọi 'soldier' trong bán kính `splash_radius` quanh TARGET (KHÔNG quanh
-          attacker) → damage × `splash_mult`, dtype='aoe'.
-        • Tự loại trừ chính target khỏi splash để không trừ máu 2 lần.
+    Cập nhật (NHÓM 5):
+        Trước đây splash chỉ quét quanh TARGET, chỉ trúng 'soldier'.
+        Giờ chuyển thành CLEAVE quanh ATTACKER, trúng MỌI ENTITY trong
+        bán kính `_splash_radius` (soldier + commander + tower + wall + HQ).
+        Lý do: SoldierHunter cầm lưỡi liềm vung 360° — bất cứ gì đứng
+        trong vùng vung lưỡi (ngang với attack_range) đều dính sát thương.
 
-    `splash_radius` mặc định 60 — phù hợp vũ khí lưỡi hiểm của
-    SoldierHunter (frame 192×192).
+    Damage:
+        • Target chính (mục tiêu được AI chọn) → damage = `attacker._damage
+          × _mult`, dtype='soldier'.
+        • Mọi entity (soldier/commander/tower/wall/hq) trong bán kính
+          `_splash_radius` quanh ATTACKER → damage × `_splash_mult` (mặc
+          định 0.5 = một nửa main), dtype='aoe'.
+        • Tự loại trừ chính target khỏi splash → không trừ máu 2 lần.
+
+    Vì sao dtype='soldier' (không phải 'normal')?
+        • 'normal' được dành riêng cho đòn cơ bản của MeleeRushStrategy
+          (RegularTitan) — quy ước: 1 strategy ⇄ 1 dtype phân biệt.
+        • Lính có thể trang bị armor chống 'soldier' (kháng 30%) trong
+          khi vẫn ăn đầy 'normal' từ Regular — cho phép balance riêng.
+
+    `_splash_radius` mặc định 120 — set ≈ attack_range của SoldierHunter
+    (xem `Titan.SoldierHunter._DEFAULT_ATTACK_RANGE`) để teammate thấy
+    "vùng cleave = tầm đánh". Có thể override khi khởi tạo strategy.
     """
 
-    _DEFAULT_DAMAGE_MULT = 1.0
-    _DEFAULT_DTYPE       = 'normal'
+    _DEFAULT_DAMAGE_MULT = 3.0
+    _DEFAULT_DTYPE       = 'soldier'
+
+    # Danh sách entity_type bị quét trong cleave AoE — giữ ở class-level
+    # để teammate biết chính xác phạm vi (và có thể override khi cần).
+    _SPLASH_ENTITY_TYPES: tuple = ('soldier', 'commander', 'tower', 'wall', 'hq')
 
     def __init__(self, damage_mult: float = None, dtype: str = None,
-                 splash_radius: float = 60.0, splash_mult: float = 0.5,
+                 splash_radius: float = 120.0, splash_mult: float = 0.5,
                  splash_dtype: str = 'aoe') -> None:
         super().__init__(damage_mult, dtype)
         self._splash_radius = splash_radius
@@ -337,15 +367,20 @@ class SoldierHunterStrategy(TitanAttackStrategy):
     def execute(self, attacker, target: IAttackable):
         base = self.compute_damage(attacker)
         target.take_damage(amount=base, dtype=self._dtype)
+
+        # Cleave: quét MỌI loại entity trong bán kính quanh ATTACKER.
+        # Dùng set để dedupe (1 entity có thể thuộc 2 pool nếu hệ thống
+        # phân loại trùng — phòng hờ).
         from systems.world_query import WorldQuery
-        splash = WorldQuery.find_in_radius(
-            target.x, target.y, self._splash_radius, 'soldier')
-        for s in splash:
-            if s is not target:
-                s.take_damage(
-                    amount=int(base * self._splash_mult),
-                    dtype=self._splash_dtype,
-                )
+        splash_dmg = int(base * self._splash_mult)
+        seen_ids: set = {id(target)}   # loại target khỏi splash từ đầu
+        for etype in self._SPLASH_ENTITY_TYPES:
+            for e in WorldQuery.find_in_radius(
+                    attacker.x, attacker.y, self._splash_radius, etype):
+                if id(e) in seen_ids:
+                    continue
+                seen_ids.add(id(e))
+                e.take_damage(amount=splash_dmg, dtype=self._splash_dtype)
 
 
 # ── NHÓM 6: Projectile / Particle phụ trợ ────────────────────────
@@ -369,17 +404,34 @@ class RockProjectile:
 
     Khi land: AoE damage_main lên target chính + damage_splash lên các entity
     khác trong bán kính `aoe_radius`, dtype='rock'.
+
+    Pushback: soldier + commander trong AoE bị đẩy tween (vector vận tốc
+    `pushback_vx/vy` set lên entity, entity tự decay trong update). Xem
+    `apply_pushback_tween()` để integrate vào game loop của soldier/commander.
     """
+
+    # Hệ số decay của vector pushback — đơn vị "1/giây".
+    # Mỗi frame: vx *= exp(-decay × dt). Decay=5 ⇒ ~99% giảm sau 0.92s,
+    # tổng quãng đường đẩy ≈ v0 / decay = push_dist. Tăng decay → đẩy
+    # nhanh và dứt khoát; giảm → đẩy chậm dài hơi.
+    _PUSHBACK_DECAY: float = 5.0
 
     def __init__(self, start_x: float, start_y: float, target,
                  velocity: float = 250.0, angle_deg: float = 15.0,
                  gravity: float = 600.0,
                  damage_main: int = 80, damage_splash: int = 40,
                  aoe_radius: float = 80.0,
-                 knockback_dist: float = 40.0) -> None:
+                 pushback_soldier: float = 100.0,
+                 pushback_commander: float = 50.0,
+                 beast_x: float | None = None,
+                 beast_y: float | None = None) -> None:
         self.x = float(start_x)
         self.y = float(start_y)
         self._target = target
+        # Vị trí Beast (nguồn ném đá) — dùng để loại trừ hướng pushback về phía Beast.
+        # Nếu không truyền (fallback), dùng chính start_x/y (vị trí tay beast lúc release).
+        self._beast_x = float(beast_x) if beast_x is not None else float(start_x)
+        self._beast_y = float(beast_y) if beast_y is not None else float(start_y)
 
         # Hướng tới target tại thời điểm spawn
         dx = target.x - start_x
@@ -400,10 +452,16 @@ class RockProjectile:
         self.vz = velocity * math.sin(angle_rad)
         self._gravity = gravity
 
-        self._damage_main    = damage_main
-        self._damage_splash  = damage_splash
-        self._aoe_radius     = aoe_radius
-        self._knockback_dist = knockback_dist
+        self._damage_main        = damage_main
+        self._damage_splash      = damage_splash
+        self._aoe_radius         = aoe_radius
+        # Pushback (đẩy lùi) tách riêng theo loại mục tiêu:
+        #   • _pushback_soldier   — soldier bị đẩy mạnh (trung bình 100px ở tâm)
+        #   • _pushback_commander — commander bị đẩy ÍT hơn (~50% soldier) vì hero nặng
+        # Giá trị là MAX distance (khi target nằm ngay tâm điểm rơi); falloff
+        # tuyến tính theo khoảng cách: gần tâm → đẩy xa, rìa AoE → đẩy ít.
+        self._pushback_soldier   = pushback_soldier
+        self._pushback_commander = pushback_commander
 
         self.alive   = True
         self._landed = False
@@ -432,19 +490,30 @@ class RockProjectile:
         return True
 
     def _on_land(self) -> None:
-        """Áp damage AoE tại điểm rơi.
+        """Áp damage AoE + pushback tại điểm rơi.
 
         Quy ước:
           • Tower/Soldier/Commander/Wall/HQ trong AoE đều dính damage.
           • Target chính (`self._target`) nhận `damage_main`, các entity
             khác trong AoE nhận `damage_splash`.
-          • KNOCKBACK: chỉ áp dụng cho 'soldier'. Tower/Wall/HQ (công
-            trình cố định) và Commander (hero) không bị đẩy lùi.
-          • Knockback magnitude = `_knockback_dist`, đẩy ra xa khỏi điểm rơi.
+
+        Pushback (NHÓM 6 — Beast):
+          • Chỉ áp dụng cho **soldier** (mạnh) và **commander** (yếu hơn,
+            ~50% soldier vì hero "nặng"). Tower/Wall/HQ không bị đẩy.
+          • Hướng đẩy: **random trong nửa mặt phẳng đối diện Beast** —
+            không bao giờ đẩy về phía Beast. Ví dụ Beast ở W của điểm
+            rơi → random hướng E/N/S, chặn W.
+          • Độ mạnh: **falloff tuyến tính** theo khoảng cách từ tâm điểm
+            rơi đá: `push = max_push × (1 - dist / aoe_radius)`. Càng
+            gần tâm → đẩy càng xa.
+          • Cơ chế: **tween qua nhiều frame** — set vector vận tốc
+            `pushback_vx/vy` lên entity; entity sẽ tự decay trong update.
+            Giây quy đổi: vector ban đầu = push_dist × `_PUSHBACK_DECAY`
+            (decay 5/giây → toàn bộ đoạn đẩy hoàn tất trong ~0.6s).
         """
         from systems.world_query import WorldQuery
 
-        # Map entity → entity_type để biết ai là soldier (cho knockback)
+        # Map entity → entity_type để biết loại nào cho pushback
         type_map: dict = {}
         candidates = []
         for etype in ('tower', 'soldier', 'commander', 'wall', 'hq'):
@@ -457,11 +526,27 @@ class RockProjectile:
             candidates.extend(hits)
 
         # Đảm bảo target chính luôn dính (kể cả khi WorldQuery không
-        # phân loại được nó — vd dummy custom).
+        # phân loại được nó — vd dummy custom không thuộc pool).
+        # BUG FIX: cũng phải gán entity_type cho target chính để pushback
+        # nhận diện được. Đọc qua attribute `entity_type` của target
+        # (duck-type); nếu không có thì coi như 'soldier' (mục tiêu mặc
+        # định của Beast — boss này ném đá nhắm vào lính + commander).
         if (self._target is not None
                 and getattr(self._target, 'is_alive', False)
                 and id(self._target) not in type_map):
             candidates.append(self._target)
+            type_map[id(self._target)] = getattr(self._target, 'entity_type', 'soldier')
+
+        # Vector từ Beast → điểm rơi (dùng để xác định "nửa mặt phẳng
+        # đối diện Beast"). Nếu beast trùng điểm rơi (degenerate) thì
+        # cho phép random toàn vòng tròn.
+        bdx = self.x - self._beast_x
+        bdy = self.y - self._beast_y
+        bdist = (bdx * bdx + bdy * bdy) ** 0.5
+        if bdist > 0:
+            forward_x, forward_y = bdx / bdist, bdy / bdist
+        else:
+            forward_x, forward_y = None, None   # fallback: random toàn vòng
 
         seen = set()
         for e in candidates:
@@ -473,22 +558,85 @@ class RockProjectile:
             else:
                 e.take_damage(amount=self._damage_splash, dtype='rock')
 
-            # Knockback chỉ cho soldier
-            if type_map.get(id(e)) == 'soldier':
-                dx = e.x - self.x
-                dy = e.y - self.y
-                dist = (dx * dx + dy * dy) ** 0.5
-                if dist > 0:
-                    push = self._knockback_dist
-                    e.x += (dx / dist) * push
-                    e.y += (dy / dist) * push
-                else:
-                    e.x += self._knockback_dist
-                # Đánh dấu pushback dtype phụ (caller có thể nhận biết)
-                try:
-                    e.take_damage(amount=0, dtype='pushback')
-                except Exception:
-                    pass
+            etype = type_map.get(id(e))
+            if etype == 'soldier':
+                max_push = self._pushback_soldier
+            elif etype == 'commander':
+                max_push = self._pushback_commander
+            else:
+                continue   # tower/wall/hq không bị đẩy
+
+            # Falloff tuyến tính theo khoảng cách tới tâm điểm rơi
+            dx = e.x - self.x
+            dy = e.y - self.y
+            dist = (dx * dx + dy * dy) ** 0.5
+            falloff = max(0.0, 1.0 - dist / self._aoe_radius) if self._aoe_radius > 0 else 1.0
+            push_dist = max_push * falloff
+            if push_dist <= 0:
+                continue
+
+            # Random hướng trong nửa mặt phẳng đối diện Beast.
+            # Cách làm: rejection sampling — random angle [0, 2π], chấp
+            # nhận nếu dot(dir, forward) >= 0 (cùng phía 'xa Beast'),
+            # vì forward chỉ từ Beast → điểm rơi (tức hướng "xa Beast").
+            for _ in range(8):
+                theta = random.uniform(0, 2 * math.pi)
+                dir_x = math.cos(theta)
+                dir_y = math.sin(theta)
+                if forward_x is None:
+                    break   # degenerate: chấp nhận mọi hướng
+                if dir_x * forward_x + dir_y * forward_y >= 0.0:
+                    break
+            else:
+                # Fallback sau 8 lần fail: dùng đúng forward
+                dir_x, dir_y = forward_x, forward_y
+
+            # Set vector pushback (tween) — entity tự decay trong update().
+            # vận tốc khởi tạo = push_dist × _PUSHBACK_DECAY → toàn đoạn
+            # đẩy hoàn tất trong ~1/decay giây.
+            decay = self._PUSHBACK_DECAY
+            vx_push = dir_x * push_dist * decay
+            vy_push = dir_y * push_dist * decay
+            # Cộng dồn vào pushback hiện tại (nếu entity bị nhiều rock cùng lúc)
+            e.pushback_vx = getattr(e, 'pushback_vx', 0.0) + vx_push
+            e.pushback_vy = getattr(e, 'pushback_vy', 0.0) + vy_push
+            # Đánh dấu để caller (HUD/log) biết entity vừa bị pushback
+            try:
+                e.take_damage(amount=0, dtype='pushback')
+            except Exception:
+                pass
+
+    @staticmethod
+    def apply_pushback_tween(entity, dt: float) -> None:
+        """Tích phân vector pushback của entity qua 1 frame (tween).
+
+        Cách dùng: trong `update(dt)` của Soldier/Commander, gọi
+        `RockProjectile.apply_pushback_tween(self, dt)` ngay đầu hàm.
+        Hàm sẽ:
+          1. Đọc `entity.pushback_vx/vy` (mặc định 0 nếu chưa có).
+          2. Dịch entity theo vector × dt (di chuyển thực sự).
+          3. Decay vector theo `exp(-_PUSHBACK_DECAY × dt)` — vector
+             tiến tới 0, nên pushback sẽ tự kết thúc sau ~0.6–1s.
+          4. Khi |v| < 1px/s → snap về 0 cho gọn.
+
+        An toàn với entity chưa có 2 attribute này (init lazy).
+        """
+        vx = getattr(entity, 'pushback_vx', 0.0)
+        vy = getattr(entity, 'pushback_vy', 0.0)
+        if vx == 0.0 and vy == 0.0:
+            return
+        entity.x += vx * dt
+        entity.y += vy * dt
+        # Exponential decay — ổn định với dt biến thiên (60fps vs 30fps).
+        factor = math.exp(-RockProjectile._PUSHBACK_DECAY * dt)
+        vx *= factor
+        vy *= factor
+        # Snap về 0 khi đủ nhỏ để tránh "trôi vĩnh viễn"
+        if abs(vx) < 1.0 and abs(vy) < 1.0:
+            vx = 0.0
+            vy = 0.0
+        entity.pushback_vx = vx
+        entity.pushback_vy = vy
 
     def draw(self, screen: pygame.Surface, rock_frame: pygame.Surface) -> None:
         """Vẽ rock tại (x, y - z) với rotation; fallback hình tròn nếu sprite None."""

@@ -45,6 +45,42 @@ Ví dụ sử dụng
     ai.update(dt)
     titan.update(dt)
     titan.draw(screen)
+
+Lưu ý cho Soldier/Commander production
+--------------------------------------
+BeastTitan (boss M4) ném đá AOE đẩy lùi soldier + commander. Vector
+pushback được set qua attribute `pushback_vx/pushback_vy` của entity và
+tween qua nhiều frame. Lớp Soldier/Commander phải:
+
+  1. Khởi tạo 2 attribute trong `__init__`:
+        self.pushback_vx = 0.0
+        self.pushback_vy = 0.0
+     (Hoặc kế thừa từ lớp cha đã có sẵn — xem `CHECKAI/_ai_dummies.py`
+      `TargetEntity` để tham khảo mẫu.)
+
+  2. Gọi `RockProjectile.apply_pushback_tween(self, dt)` ở đầu `update(dt)`:
+        from ImportAll import RockProjectile
+        class Soldier:
+            def update(self, dt):
+                RockProjectile.apply_pushback_tween(self, dt)
+                # … logic riêng …
+
+Nếu quên bước 2 → vector được set nhưng vị trí không bao giờ di chuyển
+→ pushback "biến mất" về mặt visual.
+
+Lưu ý cho `SoldierHunterStrategy` (cleave AoE)
+---------------------------------------------
+Từ bản này, SoldierHunter chém lan quét MỌI loại entity (soldier +
+commander + tower + wall + hq) trong bán kính `_splash_radius` quanh
+ATTACKER (không phải quanh target). Mặc định khi SoldierHunter khởi
+tạo strategy, nó truyền `splash_radius = self._attack_range` để vùng
+cleave đồng bộ với tầm đánh.
+
+Hệ quả với hệ thống world query:
+  • `WorldQuery.find_in_radius(cx, cy, radius, entity_type)` PHẢI hỗ
+    trợ đủ 5 entity_type: 'soldier', 'commander', 'tower', 'wall', 'hq'.
+    Nếu world của team thiếu loại nào (vd chưa có 'wall'), strategy
+    vẫn an toàn — `find_in_radius` chỉ trả list rỗng cho loại đó.
 """
 
 # =============================================================================
