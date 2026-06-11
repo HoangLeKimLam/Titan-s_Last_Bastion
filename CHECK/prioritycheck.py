@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Priority import (  # noqa: E402
     TargetContext,
     DefaultPriority, ArmoredPriority, BeastPriority, KamikazePriority,
-    SoldierHunterPriority, TowerHunterPriority, WolfPriority,
+    SoldierHunterPriority, TowerHunterPriority, WitchPriority, WolfPriority,
     make_priority_for,
     HQ, WALL, TOWER, SOLDIER, COMMANDER,
 )
@@ -161,18 +161,17 @@ def test_armored():
     ctx = TargetContext(hq=w['hq'], blocking_wall=None, can_reach_hq=True)
     check("khong Wall -> HQ", p.select_target(titan, ctx), w['hq'])
 
-    # 2c. Bị Commander tấn công → Armored coi Commander là reactive →
-    #     chuyển sang Commander (khác Default).
+    # 2c. Còn giáp + có Wall → Armored bỏ qua reactive, tiếp tục phá Wall.
     ctx = TargetContext(hq=w['hq'], blocking_wall=w['wall'],
                         attackers=[w['commander']])
-    check("bi Commander danh -> Commander",
-          p.select_target(titan, ctx), w['commander'])
+    check("con giap + bi Commander danh -> van Wall",
+          p.select_target(titan, ctx), w['wall'])
 
-    # 2d. Bị Soldier tấn công → chuyển sang Soldier (chen lên Wall).
+    # 2d. Còn giáp + bị Soldier tấn công → vẫn ưu tiên Wall tuyệt đối.
     ctx = TargetContext(hq=w['hq'], blocking_wall=w['wall'],
                         attackers=[w['soldier_b']])
-    check("bi Soldier danh -> Soldier",
-          p.select_target(titan, ctx), w['soldier_b'])
+    check("con giap + bi Soldier danh -> van Wall",
+          p.select_target(titan, ctx), w['wall'])
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -196,12 +195,12 @@ def test_beast():
     check("dang aim TowerB -> giu TowerB",
           p.select_target(titan, ctx), w['tower_b'])
 
-    # 3c. Đang aim TowerB nhưng bị Soldier tấn công → Soldier chen lên trên.
+    # 3c. Đang aim TowerB thì khóa TowerB tới chết, không bị Soldier cắt ngang.
     ctx = TargetContext(hq=w['hq'], towers=[w['tower_a'], w['tower_b']],
                         current_target=w['tower_b'],
                         attackers=[w['soldier_a']])
-    check("aim TowerB + bi Soldier danh -> Soldier",
-          p.select_target(titan, ctx), w['soldier_a'])
+    check("aim TowerB + bi Soldier danh -> giu TowerB",
+          p.select_target(titan, ctx), w['tower_b'])
 
     # 3d. Xử lý xong Soldier (soldier chết), quay lại — TowerB còn sống
     #     nên aim tiếp TowerB.
@@ -357,7 +356,49 @@ def test_wolf():
 
 
 # ─────────────────────────────────────────────────────────────────
-#  TEST 8 — make_priority_for ánh xạ đúng class
+#  TEST 8 — WitchPriority
+# ─────────────────────────────────────────────────────────────────
+
+def test_witch():
+    print("\n[8] WitchPriority")
+    w = make_world()
+    titan = MockTitan('Witch', x=100, y=100)
+    p = WitchPriority()
+
+    ctx = TargetContext(
+        hq=w['hq'],
+        towers=[w['tower_a']],
+        soldiers=[w['soldier_a'], w['soldier_b']],
+        commanders=[w['commander']],
+        can_reach_hq=True,
+    )
+    check("co phong thu -> defender gan nhat",
+          p.select_target(titan, ctx), w['soldier_a'])
+
+    ctx = TargetContext(
+        hq=w['hq'],
+        blocking_wall=w['wall'],
+        can_reach_hq=False,
+        towers=[],
+        soldiers=[],
+        commanders=[],
+    )
+    check("het phong thu + co Wall chan -> Wall",
+          p.select_target(titan, ctx), w['wall'])
+
+    ctx = TargetContext(
+        hq=w['hq'],
+        can_reach_hq=True,
+        towers=[],
+        soldiers=[],
+        commanders=[],
+    )
+    check("het phong thu + duong thong -> HQ",
+          p.select_target(titan, ctx), w['hq'])
+
+
+# ─────────────────────────────────────────────────────────────────
+#  TEST 9 — make_priority_for ánh xạ đúng class
 # ─────────────────────────────────────────────────────────────────
 
 def test_factory():
@@ -373,6 +414,7 @@ def test_factory():
         ('Kamikaze',      KamikazePriority),
         ('SoldierHunter', SoldierHunterPriority),
         ('TowerHunter',   TowerHunterPriority),
+        ('Witch',         WitchPriority),
         ('Wolf',          WolfPriority),
         ('RegularTitan',  DefaultPriority),   # không có riêng → Default
         ('ColossalTitan', DefaultPriority),   # boss thường → Default
@@ -404,6 +446,7 @@ def main():
     test_soldierhunter()
     test_towerhunter()
     test_wolf()
+    test_witch()
     test_factory()
 
     print("\n" + "=" * 60)

@@ -1033,6 +1033,82 @@ class FoundingAI(TitanAI):
             self.last_reason = f'HeavyStrike {_describe(self.target)}'
 
 
+class WitchAI(TitanAI):
+    """AI cho Witch — caster đứng xa, summon Cursed toàn map.
+
+    Khi còn soldier/commander/tower, Witch đứng yên và cast theo cooldown.
+    Khi hết lực lượng phòng thủ, Witch dùng fallback như Titan thường:
+    đi tới Wall/HQ và cast 1 tia ở cận chiến.
+    """
+
+    _DEFENDER_TYPES = (SOLDIER, COMMANDER, TOWER)
+
+    def update(self, dt: float) -> None:
+        titan = self.titan
+        if not getattr(titan, 'is_alive', False):
+            self.state = STATE_DEAD
+            self._advance_animation(dt)
+            return
+
+        if getattr(titan, '_is_casting', False):
+            self.state = STATE_SKILL
+            self.last_reason = 'đang giữ frame summon trước khi gọi sét'
+            self._stop_moving()
+            self._advance_animation(dt)
+            return
+
+        context = self.sense()
+        self.target = self.decide(context)
+        titan._ai_current_target = self.target
+
+        if self._has_defenders(context):
+            self._stop_moving()
+            if getattr(titan, '_cast_cd_timer', 0.0) <= 0.0:
+                trig = getattr(titan, 'trigger_attack', None)
+                if callable(trig) and trig(None):
+                    self.state = STATE_SKILL
+                    self.last_reason = 'Cursed x10 toàn map'
+            else:
+                self.state = STATE_SEEKING
+                cd = getattr(titan, '_cast_cd_timer', 0.0)
+                self.last_reason = f'chờ Cursed hồi {cd:.1f}s'
+            self._advance_animation(dt)
+            return
+
+        if self.target is None:
+            self.state = STATE_IDLE
+            self._stop_moving()
+            self._advance_animation(dt)
+            return
+
+        dist = _dist(titan, self.target)
+        if dist > self._attack_range():
+            self.state = STATE_MOVING
+            self._move(dt, self.target)
+        else:
+            self.state = STATE_ATTACKING
+            self._stop_moving()
+            titan._direction = _direction_to(titan, self.target)
+            if getattr(titan, '_cast_cd_timer', 0.0) <= 0.0:
+                trig = getattr(titan, 'trigger_attack', None)
+                if callable(trig) and trig(self.target):
+                    self.last_reason = f'Cursed fallback {_describe(self.target)}'
+            else:
+                cd = getattr(titan, '_cast_cd_timer', 0.0)
+                self.last_reason = f'chờ Cursed fallback {cd:.1f}s'
+
+        self._advance_animation(dt)
+
+    def _has_defenders(self, context: TargetContext) -> bool:
+        for entity in (
+                list(context.soldiers)
+                + list(context.commanders)
+                + list(context.towers)):
+            if _alive(entity) and _type_of(entity) in self._DEFENDER_TYPES:
+                return True
+        return False
+
+
 # ═════════════════════════════════════════════════════════════════
 #  Bảng tra cứu + Factory
 # ═════════════════════════════════════════════════════════════════
@@ -1044,6 +1120,7 @@ AI_BY_TITAN: dict = {
     'TowerHunter':   TowerHunterAI,
     'SoldierHunter': SoldierHunterAI,
     'Kamikaze':      KamikazeAI,
+    'Witch':         WitchAI,
     'ColossalTitan': ColossalAI,
     'BeastTitan':    BeastAI,
     'FoundingTitan': FoundingAI,

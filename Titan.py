@@ -45,6 +45,7 @@ from characters.titans.attackstrategy import (
     TowerHunterStrategy,
     SoldierHunterStrategy,
     Explosion,
+    Cursed,
 )
 
 
@@ -1479,3 +1480,363 @@ class Kamikaze(Titan):
                         if len(pts) >= 2:
                             pygame.draw.lines(glow_surf, glow_color, True, pts, 2)
                         screen.blit(glow_surf, (ox, oy))
+
+
+# ═══════════════════════════════════════════════════════
+#  WITCH TITAN — caster triệu hồi sét toàn map (Cursed)
+# ═══════════════════════════════════════════════════════
+
+class _WitchThunderBolt:
+    """Hiệu ứng phụ: một tia sét rơi từ trên xuống target."""
+
+    _DURATION = 0.7
+    _DRAW_W   = 96
+    _DRAW_H   = 220
+
+    def __init__(self, x: float, y: float, offset_x: float = 0.0) -> None:
+        self.x = float(x) + float(offset_x)
+        self.y = float(y)
+        self._age = 0.0
+        self.alive = True
+
+    def update(self, dt: float) -> bool:
+        self._age += dt
+        self.alive = self._age < self._DURATION
+        return self.alive
+
+    def draw(self, screen: pygame.Surface, frames: list) -> None:
+        if not self.alive:
+            return
+        t = min(self._age / self._DURATION, 1.0)
+        if frames:
+            idx = min(len(frames) - 1, int(t * len(frames)))
+            frame = frames[idx].copy()
+            if t > 0.72:
+                frame.set_alpha(int(255 * (1.0 - t) / 0.28))
+            ox = int(self.x - self._DRAW_W / 2)
+            oy = int(self.y - self._DRAW_H + 24)
+            screen.blit(frame, (ox, oy))
+        else:
+            # Fallback nếu JPG lỗi: vẫn có cue visual để demo không "câm".
+            alpha = int(220 * (1.0 - t))
+            surf = pygame.Surface((18, self._DRAW_H), pygame.SRCALPHA)
+            pygame.draw.line(
+                surf, (230, 245, 255, alpha),
+                (9, 0), (9, self._DRAW_H), 4)
+            screen.blit(
+                surf,
+                (int(self.x - 9), int(self.y - self._DRAW_H + 24)),
+            )
+
+
+class Witch(Titan):
+    """Titan phù thủy — đứng xa triệu hồi 10 tia sét toàn map.
+
+    Strategy: `Cursed` chọn soldier/commander/tower trên toàn map, ưu
+    tiên target unique trước rồi lặp nếu thiếu để đủ 10 tia. Khi hết lực
+    lượng phòng thủ, Witch mới đi theo đường thường tới Wall/HQ và cast
+    1 tia fallback ở cận chiến để không kẹt game.
+
+    Visual: `Assets/Special/wizard.png` (frame 64×64).
+      Walk   : rows 8 / 9 / 10 / 11 — 9 frame
+      Summon : rows 0 / 1 / 2 / 3   — 6 frame, giữ frame cuối 2s
+      Thunder: `Assets/thunder.jpg` frame 64x264 từ x=80, bỏ frame trắng,
+               mask nền tối, căn điểm rơi của tia và play 0.7s
+    """
+
+    _DEFAULT_HP              = 1200
+    _DEFAULT_SPEED           = 55.0
+    _DEFAULT_DAMAGE          = 45
+    _DEFAULT_ATTACK_RANGE    = 40.0
+    _DEFAULT_ATTACK_COOLDOWN = 8.0
+
+    _SPRITE_FILE = 'wizard.png'
+    _FRAME_SIZE  = 64
+    _WALK_ROWS:   dict = {0: 8, 1: 9, 2: 10, 3: 11}
+    _SUMMON_ROWS: dict = {0: 0, 1: 1, 2: 2, 3: 3}
+    _WALK_FRAMES   = 9
+    _SUMMON_FRAMES = 6
+    _ANIM_FPS      = 10
+    _SUMMON_FPS    = 6
+    _SUMMON_PAUSE  = 2.0
+
+    _THUNDER_FILE        = 'thunder.jpg'
+    _THUNDER_FRAME_COUNT = 11
+    _THUNDER_FRAME_X     = 80
+    _THUNDER_FRAME_W     = 64
+    _THUNDER_FRAME_H     = 264
+    _THUNDER_DRAW_SIZE   = (96, 220)
+    _THUNDER_SKIP_FRAMES = {2, 10}  # frame 3 trắng, frame 11 gần như rỗng
+    _THUNDER_MASK_MIN    = 80    # chỉ giữ pixel sáng của tia sét
+
+    def __init__(self, x: float, y: float, config: dict = None) -> None:
+        super().__init__(x, y, config)
+        self._attack_strategy = Cursed()
+
+        self._direction = 2
+        self._is_moving = False
+        self._is_running = False
+        self._is_casting = False
+        self._cast_anim_timer = 0.0
+        self._cast_pause_timer = 0.0
+        self._cast_released = False
+        self._pending_target = None
+        self._cast_cd_timer = 0.0
+
+        self._anim_col = 0
+        self._anim_timer = 0.0
+        self._last_bolt_count = 0
+        self._thunder_bolts: list = []
+
+        self._sprite_sheet = None
+        self._thunder_frames: list = []
+
+    # ── Sprite / thunder helpers ────────────────────────────────
+
+    def _load_sprite(self) -> None:
+        if self._sprite_sheet is not None:
+            return
+        try:
+            path = os.path.join(
+                os.path.dirname(__file__),
+                'Assets', 'Special', self._SPRITE_FILE,
+            )
+            self._sprite_sheet = pygame.image.load(path).convert_alpha()
+        except Exception:
+            self._sprite_sheet = None
+
+    def _load_thunder_frames(self) -> None:
+        if self._thunder_frames:
+            return
+        try:
+            path = os.path.join(
+                os.path.dirname(__file__),
+                'Assets', self._THUNDER_FILE,
+            )
+            sheet = pygame.image.load(path).convert()
+            for i in range(self._THUNDER_FRAME_COUNT):
+                if i in self._THUNDER_SKIP_FRAMES:
+                    continue
+                region = pygame.Rect(
+                    self._THUNDER_FRAME_X + i * self._THUNDER_FRAME_W, 0,
+                    self._THUNDER_FRAME_W, self._THUNDER_FRAME_H,
+                )
+                frame = self._masked_thunder_frame(sheet, region)
+                frame = pygame.transform.scale(frame, self._THUNDER_DRAW_SIZE)
+                self._thunder_frames.append(frame.convert_alpha())
+        except Exception:
+            self._thunder_frames = []
+
+    def _masked_thunder_frame(self, sheet: pygame.Surface,
+                              region: pygame.Rect) -> pygame.Surface:
+        """Tạo frame sét trong suốt: chỉ giữ pixel đủ sáng."""
+        src = pygame.Surface((region.w, region.h))
+        src.blit(sheet, (0, 0), region)
+
+        masked_pixels = []
+        min_luma = self._THUNDER_MASK_MIN
+        scale = 255.0 / max(1, 255 - min_luma)
+
+        src.lock()
+        try:
+            for y in range(region.h):
+                for x in range(region.w):
+                    r, g, b, _ = src.get_at((x, y))
+                    luma = int(0.299 * r + 0.587 * g + 0.114 * b)
+                    if luma < min_luma:
+                        continue
+                    alpha = min(255, int((luma - min_luma) * scale))
+                    masked_pixels.append((x, y, r, g, b, alpha))
+        finally:
+            src.unlock()
+
+        out = pygame.Surface((region.w, region.h), pygame.SRCALPHA)
+        if not masked_pixels:
+            return out
+
+        anchor_pixels = self._thunder_anchor_pixels(masked_pixels, region.h)
+        weight = sum(pixel[5] for pixel in anchor_pixels)
+        source_center_x = (
+            sum(pixel[0] * pixel[5] for pixel in anchor_pixels)
+            / max(1, weight)
+        )
+        target_center_x = region.w / 2.0
+        shift_x = int(round(target_center_x - source_center_x))
+
+        out.lock()
+        try:
+            for x, y, r, g, b, alpha in masked_pixels:
+                nx = x + shift_x
+                if 0 <= nx < region.w:
+                    out.set_at((nx, y), (r, g, b, alpha))
+        finally:
+            out.unlock()
+
+        return out
+
+    def _thunder_anchor_pixels(self, pixels: list,
+                               height: int) -> list:
+        """Lấy đoạn đầu tia để căn điểm rơi, tránh nhánh sét kéo lệch tâm."""
+        min_y = min(pixel[1] for pixel in pixels)
+        top_limit = min(height - 1, min_y + 56)
+        anchors = [pixel for pixel in pixels if pixel[1] <= top_limit]
+        return anchors or pixels
+
+    def _get_frame(self, row: int, col: int = 0):
+        if self._sprite_sheet is None:
+            return None
+        fs = self._FRAME_SIZE
+        region = pygame.Rect(col * fs, row * fs, fs, fs)
+        frame = pygame.Surface((fs, fs), pygame.SRCALPHA)
+        frame.blit(self._sprite_sheet, (0, 0), region)
+        return frame
+
+    # ── Cast / combat API ───────────────────────────────────────
+
+    def has_cursed_targets(self) -> bool:
+        """True nếu còn soldier/commander/tower sống đâu đó trên map."""
+        strat = getattr(self, '_attack_strategy', None)
+        finder = getattr(strat, '_alive_unique_defenders', None)
+        if callable(finder):
+            return bool(finder(self))
+        return False
+
+    def trigger_attack(self, target=None) -> bool:
+        """Kích hoạt animation summon. Damage release sau 2s giữ frame cuối."""
+        if self._is_casting or self._cast_cd_timer > 0.0:
+            return False
+        self._is_casting       = True
+        self._cast_anim_timer  = self._SUMMON_FRAMES / self._SUMMON_FPS
+        self._cast_pause_timer = 0.0
+        self._cast_released    = False
+        self._pending_target   = target
+        self._cast_cd_timer    = self._attack_cooldown
+        self._anim_col         = 0
+        self._anim_timer       = 0.0
+        self._is_moving        = False
+        self._is_running       = False
+
+        if target is not None:
+            dx = target.x - self.x
+            dy = target.y - self.y
+            if abs(dx) >= abs(dy):
+                self._direction = 3 if dx > 0 else 1
+            else:
+                self._direction = 2 if dy > 0 else 0
+        return True
+
+    def _release_cursed(self) -> None:
+        """Apply Cursed damage + tạo visual thunder cho từng tia."""
+        if self._cast_released:
+            return
+        self._cast_released = True
+        struck = []
+        if self._attack_strategy is not None:
+            struck = self._attack_strategy.execute(self, self._pending_target)
+
+        self._last_bolt_count = len(struck)
+        for entity in struck:
+            self._thunder_bolts.append(
+                _WitchThunderBolt(entity.x, entity.y)
+            )
+
+    # ── Update ───────────────────────────────────────────────────
+
+    def update_anim(self, dt: float) -> None:
+        if self._cast_cd_timer > 0.0:
+            self._cast_cd_timer = max(0.0, self._cast_cd_timer - dt)
+
+        self._thunder_bolts = [
+            bolt for bolt in self._thunder_bolts if bolt.update(dt)
+        ]
+
+        if self._is_casting:
+            if self._cast_anim_timer > 0.0:
+                self._cast_anim_timer -= dt
+                self._anim_timer += dt
+                if self._anim_timer >= 1.0 / self._SUMMON_FPS:
+                    self._anim_timer -= 1.0 / self._SUMMON_FPS
+                    if self._anim_col < self._SUMMON_FRAMES - 1:
+                        self._anim_col += 1
+                if (self._anim_col >= self._SUMMON_FRAMES - 1
+                        and self._cast_anim_timer <= 0.0):
+                    self._cast_anim_timer = 0.0
+                    self._cast_pause_timer = self._SUMMON_PAUSE
+            else:
+                self._cast_pause_timer -= dt
+                if self._cast_pause_timer <= 0.0:
+                    self._release_cursed()
+                    self._is_casting = False
+                    self._pending_target = None
+                    self._anim_col = 0
+                    self._anim_timer = 0.0
+            return
+
+        if self._is_moving:
+            frames = self._WALK_FRAMES
+            self._anim_timer += dt
+            if self._anim_timer >= 1.0 / self._ANIM_FPS:
+                self._anim_timer -= 1.0 / self._ANIM_FPS
+                self._anim_col = (self._anim_col + 1) % frames
+        else:
+            self._anim_col = 0
+            self._anim_timer = 0.0
+
+    def update(self, dt: float) -> None:
+        """AI nội bộ nhẹ: cast từ xa nếu còn phòng thủ, fallback phá Wall/HQ."""
+        self.update_anim(dt)
+        if not self.is_alive or self._is_casting:
+            return
+
+        has_defenders = self.has_cursed_targets()
+        if has_defenders:
+            self._is_moving = False
+            self._is_running = False
+            if self._cast_cd_timer <= 0.0:
+                self.trigger_attack(None)
+            return
+
+        if self._target is None or not getattr(self._target, 'is_alive', False):
+            self._target = self._find_best_target()
+        if self._target is None:
+            self._is_moving = False
+            return
+
+        dist = self._distance_to(self._target)
+        if dist > self._attack_range:
+            self._is_moving = True
+            self._is_running = False
+            dx = self._target.x - self.x
+            dy = self._target.y - self.y
+            if abs(dx) >= abs(dy):
+                self._direction = 3 if dx > 0 else 1
+            else:
+                self._direction = 2 if dy > 0 else 0
+            self._move_toward(self._target, dt)
+        else:
+            self._is_moving = False
+            if self._cast_cd_timer <= 0.0:
+                self.trigger_attack(self._target)
+
+    # ── Draw ─────────────────────────────────────────────────────
+
+    def draw(self, screen: pygame.Surface) -> None:
+        self._load_sprite()
+        self._load_thunder_frames()
+
+        if self._is_casting:
+            row = self._SUMMON_ROWS[self._direction]
+            col = min(self._anim_col, self._SUMMON_FRAMES - 1)
+        else:
+            row = self._WALK_ROWS[self._direction]
+            col = self._anim_col if self._is_moving else 0
+
+        frame = self._get_frame(row, col)
+        if frame is not None:
+            fs = self._FRAME_SIZE
+            ox = int(self.x - fs // 2)
+            oy = int(self.y - fs // 2)
+            screen.blit(frame, (ox, oy))
+
+        for bolt in self._thunder_bolts:
+            bolt.draw(screen, self._thunder_frames)

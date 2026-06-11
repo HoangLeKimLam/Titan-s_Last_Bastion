@@ -383,6 +383,73 @@ class SoldierHunterStrategy(TitanAttackStrategy):
                 e.take_damage(amount=splash_dmg, dtype=self._splash_dtype)
 
 
+class Cursed(TitanAttackStrategy):
+    """Triệu hồi 10 tia sét toàn map — đòn đặc trưng của Witch.
+
+    Nhóm dùng: Witch. Khác melee/projectile:
+      • Không cần khoảng cách tới target chính khi còn lực lượng phòng thủ.
+      • Quét toàn map qua WorldQuery, ưu tiên soldier + commander + tower.
+      • Ưu tiên mỗi target ăn 1 tia trước; nếu thiếu target thì cho phép
+        đánh trùng để vẫn đủ 10 tia.
+      • Khi không còn nhóm phòng thủ, fallback đánh target được truyền vào
+        đúng 1 tia để Witch vẫn phá Wall/HQ ở cận chiến.
+    """
+
+    _DEFAULT_DAMAGE_MULT = 1.0
+    _DEFAULT_DTYPE       = 'cursed'
+    _TARGET_TYPES: tuple = ('soldier', 'commander', 'tower')
+
+    def __init__(self, damage_mult: float = None, dtype: str = None,
+                 bolt_count: int = 10,
+                 search_radius: float = 1_000_000.0) -> None:
+        super().__init__(damage_mult, dtype)
+        self._bolt_count    = int(bolt_count)
+        self._search_radius = float(search_radius)
+
+    def _alive_unique_defenders(self, attacker) -> list:
+        """Lấy danh sách soldier/commander/tower còn sống trong toàn map."""
+        from systems.world_query import WorldQuery
+        out = []
+        seen = set()
+        for etype in self._TARGET_TYPES:
+            for entity in WorldQuery.find_in_radius(
+                    attacker.x, attacker.y, self._search_radius, etype):
+                if not getattr(entity, 'is_alive', False):
+                    continue
+                marker = id(entity)
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                out.append(entity)
+        return out
+
+    def pick_targets(self, attacker, fallback_target=None) -> list:
+        """Chọn target cho từng tia sét.
+
+        Trả danh sách có thể chứa trùng object. Caller dùng danh sách này
+        để vừa apply damage vừa spawn visual đúng vị trí.
+        """
+        defenders = self._alive_unique_defenders(attacker)
+        if defenders:
+            selected = defenders[:]
+            random.shuffle(selected)
+            selected = selected[:self._bolt_count]
+            while len(selected) < self._bolt_count:
+                selected.append(random.choice(defenders))
+            return selected
+
+        if fallback_target is not None and getattr(fallback_target, 'is_alive', True):
+            return [fallback_target]
+        return []
+
+    def execute(self, attacker, target: IAttackable = None):
+        damage = self.compute_damage(attacker)
+        struck = self.pick_targets(attacker, target)
+        for entity in struck:
+            entity.take_damage(amount=damage, dtype=self._dtype)
+        return struck
+
+
 # ── NHÓM 6: Projectile / Particle phụ trợ ────────────────────────
 #
 # RockProjectile và HeatParticle là các thực thể "phụ" sinh ra bởi đòn

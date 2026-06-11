@@ -22,6 +22,7 @@ os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 import _ai_bootstrap  # noqa: F401,E402
 from Titan import (  # noqa: E402
     RegularTitan, ArmoredTitan, Wolf, TowerHunter, SoldierHunter, Kamikaze,
+    Witch,
 )
 from Boss import ColossalTitan, BeastTitan, FoundingTitan  # noqa: E402
 from AI import make_ai_for, SimpleWorldView  # noqa: E402
@@ -58,6 +59,7 @@ def test_animation_and_movement() -> None:
         ('Wolf',          Wolf(120.0, 360.0, dict(cfgs)),          True),
         ('TowerHunter',   TowerHunter(120.0, 360.0, dict(cfgs)),   True),
         ('SoldierHunter', SoldierHunter(120.0, 360.0, dict(cfgs)), True),
+        ('Witch',         Witch(120.0, 360.0, dict(cfgs)),         True),
         ('ColossalTitan', ColossalTitan(120.0, 360.0, dict(cfgs)), True),
         ('FoundingTitan', FoundingTitan(120.0, 360.0, dict(cfgs)), True),
     ]

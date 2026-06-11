@@ -24,7 +24,7 @@ os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 
 import _ai_bootstrap  # noqa: F401,E402
 from Titan import (  # noqa: E402
-    RegularTitan, ArmoredTitan, Wolf, TowerHunter, SoldierHunter,
+    RegularTitan, ArmoredTitan, Wolf, TowerHunter, SoldierHunter, Witch,
 )
 from Boss import ColossalTitan, BeastTitan, FoundingTitan  # noqa: E402
 from AI import make_ai_for, SimpleWorldView  # noqa: E402
@@ -66,17 +66,19 @@ def test_regular() -> None:
 def test_armored() -> None:
     print("\n[ArmoredTitan] Dash (Ram) húc Wall → _ram_hits tăng → vỡ giáp")
     hq   = Headquarters(900.0, 360.0)
-    # Wall HP cao để Ram húc nhiều lần mà tường chưa sập trước khi vỡ giáp.
-    wall = WallDummy(500.0, 360.0, label='Wall', hp=5000)
+    # Wall HP cao để Ram húc đủ `_HITS_TO_BREAK` mà tường chưa sập trước.
+    wall = WallDummy(500.0, 360.0, label='Wall', hp=10000)
     t = ArmoredTitan(120.0, 360.0, {'hp': 1500, 'speed': 80.0, 'damage': 70})
     ai = make_ai_for(t, SimpleWorldView(hq=hq, walls=[wall]))
     ram0 = getattr(t, '_ram_hits', 0)
-    run(ai, 1500)   # đủ lâu để húc ≥5 lần
+    threshold = getattr(t, '_HITS_TO_BREAK', 15)
+    run(ai, 2600)   # đủ lâu để húc ≥ threshold lần
     ram1   = getattr(t, '_ram_hits', 0)
     broken = not getattr(t, '_armor_intact', True)
     check("Dash húc Wall (_ram_hits tăng)", ram1 > ram0,
           f"_ram_hits {ram0} → {ram1}")
-    check("Ram đủ 5 lần → giáp vỡ", broken,
+    check("Ram đủ ngưỡng → giáp vỡ", broken,
+          f"_ram_hits={ram1}/{threshold}, "
           f"_armor_intact={getattr(t,'_armor_intact',True)}")
 
 
@@ -120,6 +122,31 @@ def test_soldierhunter() -> None:
     run(ai, 250)
     check("Soldier mất máu vì cleave", s1._hp < hp0,
           f"{hp0} → {s1._hp}")
+
+
+# ── Witch — Cursed x10 toàn map ─────────────────────────────────
+
+def test_witch() -> None:
+    print("\n[Witch] Cursed x10 đánh soldier/commander/tower toàn map")
+    s = SoldierDummy(500.0, 320.0, label='Sld')
+    c = CommanderDummy(540.0, 360.0, name='Levi')
+    tw = TowerDummy(580.0, 400.0, label='Tower')
+    t = Witch(120.0, 360.0, {'hp': 1200, 'speed': 55.0, 'damage': 45})
+    world = SimpleWorldView(soldiers=[s], commanders=[c], towers=[tw])
+    _ai_bootstrap._MockWorldQuery.soldiers = [s]
+    _ai_bootstrap._MockWorldQuery.commanders = [c]
+    _ai_bootstrap._MockWorldQuery.towers = [tw]
+    ai = make_ai_for(t, world)
+    hp0 = (s._hp, c._hp, tw._hp)
+    run(ai, 180)  # 6 giây: summon 1s + hold 2s + release
+    check("Soldier trúng Cursed", s._hp < hp0[0], f"{hp0[0]} → {s._hp}")
+    check("Commander trúng Cursed", c._hp < hp0[1], f"{hp0[1]} → {c._hp}")
+    check("Tower trúng Cursed", tw._hp < hp0[2], f"{hp0[2]} → {tw._hp}")
+    check("Witch release đúng 10 tia", getattr(t, '_last_bolt_count', 0) == 10,
+          f"last_bolts={getattr(t, '_last_bolt_count', 0)}")
+    _ai_bootstrap._MockWorldQuery.soldiers = []
+    _ai_bootstrap._MockWorldQuery.commanders = []
+    _ai_bootstrap._MockWorldQuery.towers = []
 
 
 # ── ColossalTitan — Steam Burst + Jump Stomp ─────────────────────
@@ -190,6 +217,7 @@ if __name__ == '__main__':
     test_wolf()
     test_towerhunter()
     test_soldierhunter()
+    test_witch()
     test_colossal()
     test_beast()
     test_founding()

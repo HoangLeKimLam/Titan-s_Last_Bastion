@@ -555,6 +555,35 @@ class WolfPriority(TargetPriorityStrategy):
         return context.hq if _is_alive(context.hq) else None
 
 
+class WitchPriority(TargetPriorityStrategy):
+    """Bộ ưu tiên của Witch — caster đánh lực lượng phòng thủ toàn map.
+
+    Thứ tự ưu tiên:
+        1. Soldier / Commander / Tower — mục tiêu CHỦ ĐỘNG. Witch không
+           cần bị đánh trước, vì đòn Cursed là sét toàn map.
+        2. HQ / Wall theo đường tiến công — chỉ dùng khi hết phòng thủ.
+
+    Lưu ý: Priority chỉ chọn một target đại diện cho HUD/AI. Strategy
+    `Cursed` tự quét toàn map và chọn đủ 10 tia khi thực sự release.
+    """
+
+    def select_target(self, titan, context: TargetContext):
+        defenders = (
+            list(context.soldiers)
+            + list(context.commanders)
+            + list(context.towers)
+        )
+        prey = _nearest(titan, defenders)
+        if prey is not None:
+            return prey
+
+        path = self._path_target(context)
+        if path is not None:
+            return path
+
+        return context.hq if _is_alive(context.hq) else None
+
+
 # ─────────────────────────────────────────────────────────────────
 #  Bảng tra cứu: tên loại Titan → class Priority
 # ─────────────────────────────────────────────────────────────────
@@ -569,6 +598,7 @@ PRIORITY_BY_TITAN: dict = {
     'Kamikaze':      KamikazePriority,
     'SoldierHunter': SoldierHunterPriority,
     'TowerHunter':   TowerHunterPriority,
+    'Witch':         WitchPriority,
     'Wolf':          WolfPriority,
 }
 

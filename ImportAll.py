@@ -112,6 +112,7 @@ from Titan import (
     TowerHunter,
     SoldierHunter,
     Kamikaze,
+    Witch,
 )
 from Boss import (
     ColossalTitan,
@@ -139,6 +140,7 @@ _TITAN_REGISTRY: dict = {
     'tower_hunter':   TowerHunter,
     'soldier_hunter': SoldierHunter,
     'kamikaze':       Kamikaze,
+    'witch':          Witch,
 
     # Boss — file Boss.py
     'colossal':       ColossalTitan,
@@ -224,6 +226,6 @@ def list_available_titans() -> list:
         >>> from ImportAll import list_available_titans
         >>> list_available_titans()
         ['armored', 'beast', 'colossal', 'founding', 'kamikaze',
-         'regular', 'soldier_hunter', 'tower_hunter', 'wolf']
+         'regular', 'soldier_hunter', 'tower_hunter', 'witch', 'wolf']
     """
     return sorted(_TITAN_REGISTRY.keys())
