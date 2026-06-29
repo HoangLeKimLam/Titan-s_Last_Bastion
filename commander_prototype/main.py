@@ -29,7 +29,12 @@ Controls:
                  Camera follows the active commander across the larger world.
     T          — spawn a DummyTitan at the mouse cursor
     B          — spawn a LargeTitan at the mouse cursor (bonus-eligible)
-    ESC        — quit
+    M          — toggle the strategic MINI-MAP (resource collection):
+                   send expedition teams to explore locked forests/caves or
+                   collect random items; send mining teams (specify amount) to
+                   opened zones; upgrade "Khả năng thám hiểm" to cut explore time.
+                   Up to 3 teams run in parallel; gains feed ResourceManager.
+    ESC        — close the mini-map if open, otherwise quit
 
 Squads are spawned ONLY by Towers (auto-deploy when a titan enters a tower's
 AGGRO_RADIUS). The old THÀNH (BASE_RECT) + HUD-deploy + RMB-select-titan flow
@@ -49,7 +54,9 @@ from armin import ArminCommander
 from eren import ErenCommander
 from input_handler import PlayerInputHandler
 from mikasa import MikasaCommander
-from stubs import DummyTitan, LargeTitan, WorldQuery
+from resource_map import MapState
+from resource_map_screen import ResourceMapScreen
+from stubs import DummyTitan, LargeTitan, ResourceManager, WorldQuery
 from tower import Tower
 from tower_menu import TowerMenu
 
@@ -216,6 +223,11 @@ def main() -> int:
         WorldQuery.register_structure(tower.bounds())
     spawn_initial_titans(3)
 
+    # Mini-map dispatch/collection meta-layer (press M to open the strategic map).
+    map_state = MapState()
+    map_state.seed_default_zones()
+    map_screen: ResourceMapScreen | None = None
+
     inputs = PlayerInputHandler()
     active_menu: TowerMenu | None = None
     running = True
@@ -224,8 +236,14 @@ def main() -> int:
         dt = clock.tick(FPS) / 1000.0
         cam = _compute_camera(active)   # follow the active commander
         lmb_consumed = False            # menu/tower-click consumed this frame
+        map_open = map_screen is not None and map_screen.is_open
 
         for event in pygame.event.get():
+            # Strategic mini-map (if open) eats LMB clicks first.
+            if map_open and map_screen is not None:
+                if map_screen.handle_event(event):
+                    lmb_consumed = True
+                    continue
             # Tower menu (if open) eats LMB first; outside-click closes the menu.
             if active_menu is not None and active_menu.is_open:
                 if active_menu.handle_event(event):
@@ -236,8 +254,26 @@ def main() -> int:
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
+                if event.key == pygame.K_m:
+                    # Toggle the strategic mini-map.
+                    if map_open and map_screen is not None:
+                        map_screen.close()
+                        map_screen = None
+                        map_open = False
+                    else:
+                        map_screen = ResourceMapScreen(map_state, (WIDTH, HEIGHT))
+                        map_open = True
+                elif event.key == pygame.K_ESCAPE:
+                    # ESC closes the map if open; otherwise quits.
+                    if map_open and map_screen is not None:
+                        map_screen.close()
+                        map_screen = None
+                        map_open = False
+                    else:
+                        running = False
+                elif map_open:
+                    # While the strategic map is focused, suppress tactical keys.
+                    pass
                 elif event.key in switch_keys:
                     active = switch_keys[event.key]
                     log_lines.append(f"Switched to {active.NAME}")
@@ -269,35 +305,48 @@ def main() -> int:
                     active_menu = TowerMenu(twr, screen_size=(WIDTH, HEIGHT))
                     lmb_consumed = True
 
-        # --- Input applies to the ACTIVE commander ---
-        # Movement disabled during E flight (commander is in lerp control)
-        if active._e_state != "flying":
-            vx, vy = inputs.movement_vector()
-            if vx or vy:
-                active.move((active.x + vx * 6, active.y + vy * 6))
+        # The map may have been toggled during the event loop — refresh the
+        # focus flag so tactical input is gated on the CURRENT state, not the
+        # value sampled at the top of the frame.
+        map_open = map_screen is not None and map_screen.is_open
 
-        # Q / R remain edge-triggered via PlayerInputHandler.
-        # E is handled in the event loop above (needs aim toggle).
-        skill = inputs.triggered_skill()
-        if skill is not None:
-            active.use_skill(skill)
+        # --- Input applies to the ACTIVE commander (suspended while the
+        #     strategic mini-map is focused) ---
+        if not map_open:
+            # Movement disabled during E flight (commander is in lerp control)
+            if active._e_state != "flying":
+                vx, vy = inputs.movement_vector()
+                if vx or vy:
+                    active.move((active.x + vx * 6, active.y + vy * 6))
 
-        if inputs.mouse_left_clicked() and not lmb_consumed:
-            active.basic_attack()
-        if inputs.space_pressed():
-            active.cancel_swing()
+            # Q / R remain edge-triggered via PlayerInputHandler.
+            # E is handled in the event loop above (needs aim toggle).
+            skill = inputs.triggered_skill()
+            if skill is not None:
+                active.use_skill(skill)
 
-        # Live aim direction + range follow the mouse during AIMING and FLYING.
-        # During flight the preview lets the player see/pick the next target to
-        # switch to (press E → redirect_flight).
-        if active._e_state == "aiming":
-            ax, ay = _mouse_aim_vector(active, cam)
-            active.set_aim_direction(ax, ay)  # magnitude → swing range
-        elif active._e_state == "flying":
-            ax, ay = _mouse_aim_vector(active, cam)
-            active.update_flight_aim(ax, ay)
+            if inputs.mouse_left_clicked() and not lmb_consumed:
+                active.basic_attack()
+            if inputs.space_pressed():
+                active.cancel_swing()
 
-        # --- Update + cull dead entities ---
+            # Live aim direction + range follow the mouse during AIMING/FLYING.
+            if active._e_state == "aiming":
+                ax, ay = _mouse_aim_vector(active, cam)
+                active.set_aim_direction(ax, ay)  # magnitude → swing range
+            elif active._e_state == "flying":
+                ax, ay = _mouse_aim_vector(active, cam)
+                active.update_flight_aim(ax, ay)
+        else:
+            # Drain the polled edge-trigger states so they don't fire on the
+            # frame the map closes.
+            inputs.movement_vector()
+            inputs.triggered_skill()
+            inputs.mouse_left_clicked()
+            inputs.space_pressed()
+
+        # --- Update meta + world + cull dead entities ---
+        map_state.update(dt)
         for entity in WorldQuery.all():
             entity.update(dt)
         for entity in WorldQuery.all():
@@ -333,6 +382,7 @@ def main() -> int:
             f"{t.total_garrison()}/{Tower.CAPACITY}[{t.state[:3]}]"
             for t in towers
         )
+        stock = ResourceManager.get_instance().stock
         hud_lines = [
             f"FPS: {clock.get_fps():.0f}    Active: [{active.NAME}]",
             f"Lv {active.level}  HP {active.hp}/{active.max_hp}",
@@ -345,8 +395,11 @@ def main() -> int:
             f"| Titan stack x{stack} ({stack_pct}% next)",
             f"Soldiers alive: {soldier_count}",
             f"Towers ({len(towers)}): {tower_summary}   (LMB tháp → menu)",
-            "WASD=move  LMB=atk/tower-menu  Q/R=skill  E=swing  "
-            "SPACE=cancel  1/2/3=switch  T=titan  B=LargeTitan  ESC=quit",
+            f"Stock: wood={stock.wood} stone={stock.stone} gas={stock.gas} "
+            f"ore={stock.ore}  |  Map[M]: doi {map_state.teams_busy}/"
+            f"{map_state.TEAMS_TOTAL} expl Lv{map_state.exploration_level}",
+            "WASD=move  LMB=atk/tower-menu  Q/R=skill  E=swing  SPACE=cancel  "
+            "1/2/3=switch  T=titan  B=LargeTitan  M=map  ESC=quit",
         ]
         for i, line in enumerate(hud_lines):
             screen.blit(font.render(line, True, (230, 230, 230)),
@@ -362,6 +415,13 @@ def main() -> int:
                 active_menu.draw(screen)
             else:
                 active_menu = None
+
+        # Strategic mini-map overlay — drawn above everything when open.
+        if map_screen is not None:
+            if map_screen.is_open:
+                map_screen.draw(screen)
+            else:
+                map_screen = None
 
         pygame.display.flip()
 

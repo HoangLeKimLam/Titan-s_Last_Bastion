@@ -293,7 +293,8 @@ Thay thế hoàn toàn ODM Surge cũ.
 
 ## 12. Tests
 
-**121 tests** — tất cả headless (không cần pygame display) — 75 commander + 25 soldier + 21 tower:
+**137 tests** — tất cả headless (không cần pygame display) — 75 commander + 25 soldier
++ 21 tower + 16 resource-map:
 
 | Nhóm | Số test |
 |---|---|
@@ -315,6 +316,7 @@ Thay thế hoàn toàn ODM Surge cũ.
 | LargeTitan | 1 |
 | **Soldier** (stats/def/attack/arrow/taunt/titan-retaliation/squad/retarget/regroup/home-zone/retreat/**vanish-into-tower**) | 25 |
 | **Tower** (capacity/wave-order/aggro-trigger/3-wave-cap/cooldown/menu/**home-binding/wipe-redeploy**) | 21 |
+| **Resource-map** (zones/dispatch-pool/explore-unlock/explore-time-scale/upgrade/mine-earn-deplete/item-spawn-collect) | 16 |
 
 > Lưu ý: chạy headless cần `pygame` + `pytest`. Trên máy dev (Windows) đã có sẵn;
 > nếu chạy nơi khác, cài vào venv: `pip install pygame pytest` rồi
@@ -451,6 +453,57 @@ và khi hết việc thì **đi vào thành rồi biến mất**.
 
 ---
 
+## 12E. Mini-map Dispatch — thu thập tài nguyên (Sprint 22)
+
+Lớp **meta** thu thập tài nguyên trên một **mini-map tượng trưng** (chưa có map
+thật). Hiện thực hoá "Dispatch System" mà `_core/interfaces.ILootable` đã dự kiến.
+
+### File
+- `resource_map.py` — **logic thuần (không pygame)**, dễ test headless:
+  - `ResourceZone` (dataclass): `kind` (forest/cave/item), `gx/gy` (ô lưới),
+    `unlocked`, `reserve`, `resource_type`, `base_explore_time`, `item_bundle`.
+  - `DispatchJob`: 1 lượt cử đội = timer đếm ngược (`update(dt)` → `done`); có
+    `progress`/`remaining` cho UI.
+  - `MapState(IUpgradable)`: controller — `zones`, `jobs`, `exploration_level`,
+    pool `TEAMS_TOTAL=3`. API: `seed_default_zones()` (1 rừng + 1 hang **mở sẵn**,
+    2 rừng + 2 hang **khoá**), `start_explore(zone)`, `start_mine(zone, amount)`,
+    `explore_time`/`mine_time`, `get_upgrade_cost`/`upgrade` (nâng "Khả năng thám
+    hiểm" tốn `ResourceManager.spend`), `update(dt)` (tick job + spawn vật phẩm).
+- `resource_map_screen.py` — overlay pygame full-screen (mẫu `TowerMenu`):
+  lưới ô + icon (🌲 rừng / vòm hang / ◆ vật phẩm; khoá = mờ + "? LOCK"), panel phụ
+  (Đội x/3, Lv thám hiểm + nút nâng cấp kèm giá, danh sách job + thanh tiến độ),
+  action-bar dưới (chọn khu → "Thám hiểm" hoặc bộ chọn **số lượng** `-/+` + "Khai
+  thác N (Ys)"). `handle_event` "tiêu" click giống TowerMenu. Text ASCII (SysFont
+  không render được dấu tiếng Việt).
+- `tests/test_resource_map.py` — 16 test logic thuần.
+
+### Cơ chế (đã chốt với người dùng)
+- **Mini-map = màn hình chiến lược riêng**, bật/tắt bằng phím **M** (tách trận titan).
+- **Đội = job trừu tượng** (timer), **pool 3 đội** dùng chung cho thám hiểm + khai
+  thác → tối đa 3 job song song; 1 zone chỉ 1 job tại một thời điểm.
+- **Thám hiểm**: khu khoá → mở khoá; vật phẩm → thu thập (earn bundle, gỡ khỏi map).
+  `explore_time = base * 0.8^(level-1)`.
+- **Khai thác**: chỉ khu đã mở; **nhập số lượng** trước khi đi; `mine_time = 2 +
+  amount*0.1`; xong → `ResourceManager.earn` + trừ `reserve` (clamp `min(amount,
+  reserve)`); cạn trữ lượng thì ngừng.
+- **Khả năng thám hiểm** nâng cấp qua `IUpgradable` (cấp 1→5, mỗi cấp tốn tài
+  nguyên, giảm ~20% thời gian thám hiểm).
+- **Vật phẩm** spawn ngẫu nhiên mỗi `ITEM_SPAWN_INTERVAL=18s` (≤ 3 trên map), thưởng
+  bundle ngẫu nhiên (gas/ore/crystal/serum). RNG injectable (`random.Random`) cho test.
+
+### Tích hợp `main.py`
+- `map_state = MapState(); map_state.seed_default_zones()`; phím **M** mở/đóng
+  `ResourceMapScreen`. Khi map mở: overlay ăn click trước (giống `active_menu`),
+  **input chiến đấu của tướng bị treo** (titan/tháp vẫn chạy nền — không pause).
+- Mỗi frame `map_state.update(dt)`. HUD thêm dòng `Stock: wood/stone/gas/ore` +
+  `Map[M]: đội x/3 expl Lvn`. Dùng `ResourceManager.get_instance().stock`.
+
+### Phạm vi
+- forest→wood, cave→stone; mini-map tượng trưng (lưới ô), độc lập world 2880×1800.
+- Mở map không pause trận đánh; trữ lượng hữu hạn (chưa hồi sinh).
+
+---
+
 ## 13. Lịch sử thay đổi chính
 
 | Sprint | Nội dung |
@@ -476,6 +529,7 @@ và khi hết việc thì **đi vào thành rồi biến mất**.
 | 19 | **Tháp phòng thủ** (`tower.py` / `tower_menu.py`): `Tower(Entity)` đặt 2 chiếc cạnh THÀNH (vị trí cố định trên world), giữ **garrison cố định 8 cụm** chia theo W/L/A. LMB tháp mở **menu** chỉnh garrison + thứ tự loại của 3 lượt. Khi có titan trong `AGGRO_RADIUS=600px` → tháp **tự xuất 1 cụm 10 lính / lượt** theo `WAVE_COOLDOWN=3s`, tối đa **3 lượt / sự kiện**, sau đó nghỉ `EVENT_COOLDOWN=8s`. Bỏ qua slot rỗng; kết thúc sự kiện sớm nếu hết garrison hoặc titan rời tầm. Tháp cũng register làm grapple anchor (chiêu E neo được). HUD báo trạng thái tháp. 17 test mới → tổng **110 pass**. |
 | 20 | **Patrol-zone / Retreat / Heal / Wipe-redeploy**: lính bị **buộc** vào tháp đã spawn — `Soldier._home_pos` + `_home_radius` (mặc định 600px). `_acquire_nearest_titan` lọc bỏ titan ngoài vùng → lính KHÔNG truy kích titan ngoài tầm tháp; titan bị dẫn dụ ra ngoài cũng bị drop. Hết titan trong vùng → `_retreat_and_heal` đi về `home + slot_offset`, đến nơi thì idle và **hồi `HEAL_RATE=10% max HP/s`** (full HP sau ~10s; dùng `_heal_acc` để cộng dồn fractional). Tháp track `_active_squad`; nếu cụm bị wipe sạch mà titan còn trong aggro và còn waves → **xả lượt kế NGAY** (set `_wave_timer=0`, vẫn tính vào cap 3 lượt). **Bỏ hẳn** BASE_RECT + 3 nút HUD deploy + RMB-select-titan trong `main.py` — lính giờ chỉ ra từ tháp. 11 test mới (+7 soldier, +4 tower) → tổng **121 pass**. |
 | 21 | **Vanish-into-tower** ("đi vào thành"): bỏ cơ chế hồi-máu-tại-chỗ ở Sprint 20. Khi lính rút về tới home slot (`_home_pos + _slot_offset`, sai số `HOME_VANISH_DIST_PX=6px`) thì **set `is_alive=False`** → main loop cull pass tự gỡ khỏi WorldQuery. Đọc trực quan như lính bước vào tháp rồi biến mất. Đổi tên `_retreat_and_heal` → `_retreat_into_home`; xoá `HEAL_RATE`/`HOME_HEAL_DIST_PX`/`_heal_acc`. Thay 4 test "heal" cũ bằng 4 test "vanish/walk-toward-home/no-vanish-while-walking" → vẫn **121 pass**. |
+| 22 | **Mini-map Dispatch** (`resource_map.py` + `resource_map_screen.py`): màn hình chiến lược tượng trưng (phím **M**) để thu thập tài nguyên. Khu rừng→wood / hang→stone (1 rừng + 1 hang mở sẵn, còn lại khoá); **cử đội thám hiểm** mở khoá khu / nhặt **vật phẩm** ngẫu nhiên; **cử đội khai thác** (nhập số lượng) lấy tài nguyên về `ResourceManager`. **Pool 3 đội** song song; **"Khả năng thám hiểm"** nâng cấp qua `IUpgradable` (tốn tài nguyên, giảm ~20% thời gian/cấp). Logic thuần tách khỏi pygame để test; 16 test mới → tổng **137 pass**. Hiện thực hoá "Dispatch System" mà `ILootable` đã dự kiến. |
 
 ---
 
