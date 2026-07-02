@@ -1,0 +1,7 @@
+{
+  "tool_name": "PowerShell",
+  "tool_input_preview": "{\"command\":\"cd d:\\\\OOP_project\\\\titans_last_bastion; python ..\\\\test_founding_summon.py 2>&1 | Select-Object -Last 10\",\"timeout\":30000,\"description\":\"Run test and show last 10 lines\"}",
+  "error": "Exit code 1\npython : C:\\Users\\acer\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\pygame\\pkgdata.py:25: UserWarning: \r\npkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources \r\npackage is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.\r\nAt line:1 char:40\r\n+ ... t\\titans_last_bastion; python ..\\test_founding_summon.py 2>&1 | Selec ...\r\n+                            ~~~~~~~~~...",
+  "timestamp": "2026-06-23T06:06:53.977Z",
+  "retry_count": 4
+}

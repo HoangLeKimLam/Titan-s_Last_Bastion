@@ -1,0 +1,20 @@
+{
+  "level": 3,
+  "difficulty": 1.3,
+  "weights": { "Regular": 30, "Wolf": 22, "Kamikaze": 18, "SoldierHunter": 14, "TowerHunter": 10, "Armored": 6 },
+  "waves": [
+    { "wave": 1, "budget": 460,  "max_titans": 100, "reward": { "wood": 80,  "stone": 55,  "gas": 22, "food": 42 } },
+    { "wave": 2, "budget": 620,  "max_titans": 100, "reward": { "wood": 105, "stone": 70,  "gas": 28, "food": 55 } },
+    { "wave": 3, "budget": 800,  "max_titans": 100, "reward": { "wood": 135, "stone": 90,  "gas": 36, "food": 70 } },
+    { "wave": 4, "budget": 1000, "max_titans": 100, "reward": { "wood": 170, "stone": 115, "gas": 46, "food": 90 } },
+    { "wave": 5, "budget": 1240, "max_titans": 100, "reward": { "wood": 210, "stone": 145, "gas": 60, "food": 112 } }
+  ],
+  "boss_wave": {
+    "boss": "Colossal",
+    "escort_budget": 760,
+    "max_titans": 60,
+    "weights": { "Regular": 28, "Wolf": 20, "Kamikaze": 20, "SoldierHunter": 16, "TowerHunter": 10, "Armored": 6 },
+    "reward": { "wood": 200, "stone": 140, "gas": 60, "food": 110, "ore": 40 }
+  },
+  "completion_reward": { "wood": 600, "stone": 420, "gas": 200, "food": 320, "ore": 130, "serum": 5 }
+}

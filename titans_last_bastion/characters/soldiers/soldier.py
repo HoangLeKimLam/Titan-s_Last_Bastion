@@ -1,0 +1,579 @@
+# characters/soldiers/soldier.py
+from __future__ import annotations
+
+import math
+import os
+
+import pygame
+
+from core.entity import Entity
+from core.interfaces import IAttackable, IMovable
+from characters.soldiers.animation import CommanderAnimator, load_clips
+from characters.soldiers import assets_config as ac
+
+_SPRITES_DIR = os.path.join(os.path.dirname(__file__), "sprites")
+
+
+class Soldier(Entity, IAttackable, IMovable):
+    """Abstract base for all ally soldiers."""
+
+    ENTITY_TYPE: str = "soldier"
+    FACTION: str = "ally"
+    NAME: str = "Soldier"
+
+    # --- Subclass sprite hooks ------------------------------------------
+    SPRITE_FOLDER: str = ""
+    SPRITE_FRAMES: dict = {}
+    FRAME_SIZE: int = 192
+    TARGET_HEIGHT_PX: int = 42
+
+    # --- Subclass combat stats ------------------------------------------
+    BASE_HP: int = 60
+    DEFENSE: int = 0
+    SPEED: float = 90.0
+    ATTACK_DAMAGE: int = 15
+    ATTACK_RANGE: float = 42.0
+    ATTACK_COOLDOWN: float = 1.0
+    IS_RANGED: bool = False
+    TAUNTS: bool = False
+
+    HOME_VANISH_DIST_PX: float = 60.0
+
+    # Hồi máu khi ở trong tháp (IDLE)
+    HEAL_RATE: int  = 5    # HP hồi mỗi tick
+    HEAL_TICK: float = 2.0 # giây giữa mỗi tick
+
+    BODY_COLOR: tuple = (90, 160, 220)
+    BODY_RADIUS: int = 10
+
+    # Bán kính VA CHẠM tường (KHÁC BODY_RADIUS dùng cho vẽ/đến đích).
+    # Tường thật = collider 32px cách nhau 59/54px → có khe "hàng rào" 27/22px
+    # GIỮA các collider. BODY_RADIUS=10 < 13.5 → lính lọt khe → XUYÊN TƯỜNG.
+    # Đặt 18 (>13.5): chặn khe hàng rào (tường đặc) nhưng vẫn lọt lỗ THẬT
+    # (1-tile vỡ: nửa-khe 37-42px > 18) → lính chỉ qua được CHỖ TƯỜNG ĐÃ VỠ.
+    WALL_RADIUS: int = 18
+
+    def __init__(self, x: float, y: float, *, target=None,
+                 headless: bool = False,
+                 home_pos: tuple | None = None,
+                 home_radius: float = 600.0) -> None:
+        super().__init__(x, y)
+        self._max_hp = int(self.BASE_HP)
+        self._hp = int(self.BASE_HP)
+        self._damage = int(self.ATTACK_DAMAGE)
+        
+        # Apply camp buffs
+        try:
+            from systems.world_query import WorldQuery
+            from structures.buildings.building import TrainingCamp
+            camps = [b for b in WorldQuery.get_all_buildings() if isinstance(b, TrainingCamp)]
+            if camps:
+                buffs = camps[0].get_soldier_buffs()
+                self._max_hp = int(self.BASE_HP * buffs.get('hp_mult', 1.0))
+                self._hp = self._max_hp
+                self._damage = int(self.ATTACK_DAMAGE * buffs.get('dmg_mult', 1.0))
+        except Exception:
+            pass
+            
+        self._target = target
+        self._atk_timer: float = 0.0
+        self._headless = headless
+        self._squad = None
+        self._slot_offset: tuple = (0.0, 0.0)
+        self._state: str = "COMBAT"  # COMBAT, RETREAT, IDLE, DEAD, MOVING
+        self._home_pos: tuple = (
+            (float(x), float(y)) if home_pos is None
+            else (float(home_pos[0]), float(home_pos[1]))
+        )
+        self._home_radius: float = float(home_radius)
+        self._transfer_target: object = None  # Tower đích (khi MOVING)
+        self._heal_timer: float = 0.0         # tích lũy khi IDLE, reset khi ra chiến
+        self._original_home: tuple = self._home_pos  # Home gốc (Tower A)
+        self._zones: tuple = ()  # Vùng cho phép phát hiện titan (theo tháp chủ)
+        self._homeless: bool = False  # True khi tháp chủ bị phá (không nơi về)
+        # ── Frame-throttle cho gap-search (chống kẹt tường) ──────────────────────
+        # _pf_gap_timer đếm ngược từ 10; khi đến 0 mới chạy lại WorldQuery.find_nearest_gap_center.
+        # _pf_cached_gap: kết quả cầu có gáp gần nhất từ lần tìm gần nhất (dùng lại giữa các frame).
+        self._pf_gap_timer: int = 0
+        self._pf_cached_gap: tuple | None = None
+
+        clips = load_clips(
+            self.SPRITE_FOLDER, self.SPRITE_FRAMES,
+            frame_width=self.FRAME_SIZE, frame_height=self.FRAME_SIZE,
+            target_character_height=self.TARGET_HEIGHT_PX,
+            headless=headless,
+        )
+        self._animator = CommanderAnimator(clips, initial_state="idle")
+
+    # --- read-only props -------------------------------------------------
+
+    @property
+    def hp(self) -> int:
+        return self._hp
+
+    @property
+    def max_hp(self) -> int:
+        return self._max_hp
+
+    @property
+    def is_taunting(self) -> bool:
+        return self.TAUNTS and self.is_alive
+
+    # --- targeting -------------------------------------------------------
+
+    def set_target(self, titan) -> None:
+        self._target = titan
+
+    def _acquire_nearest_titan(self) -> None:
+        """Acquire the alive titan nearest to me, restricted to accessible zones.
+
+        Vùng cơ bản: lấy thẳng từ _zones của tháp chủ (ổn định, không phụ
+        thuộc vị trí lính hiện tại — tránh flicker khi đứng ở biên vùng).
+
+        Mở rộng zone: nếu có lỗ hổng tường trong home_radius → cho phép nhận
+        diện titan từ vùng kề bên (có thể đi qua lỗ để tới).
+        """
+        from systems.world_query import WorldQuery
+        hx, hy = self._home_pos
+        r  = self._home_radius
+        candidates = WorldQuery.find_in_radius(
+            cx=hx, cy=hy, radius=r, entity_type="titan"
+        )
+
+        # Vùng gốc: lấy thẳng từ tháp chủ (_zones được gán khi spawn/re-spawn)
+        allowed: set = set(getattr(self, '_zones', ()))
+        if not allowed:
+            allowed = {WorldQuery.zone_of(hx, hy)}
+
+        # Mở rộng nếu có lỗ hổng tường trong tầm → cho phép vùng kề (đi qua lỗ).
+        # Dùng snapshot base_allowed để tránh cascade: vùng mới thêm không kéo theo
+        # vùng tiếp theo trong cùng vòng lặp.
+        if WorldQuery.has_dead_wall_near(hx, hy, r, min_sections=1):
+            base_allowed = set(allowed)
+            for inner_z, outer_z in WorldQuery.WALL_ZONE_PAIRS.values():
+                if inner_z in base_allowed or outer_z in base_allowed:
+                    allowed.add(inner_z)
+                    allowed.add(outer_z)
+
+        best, best_d2 = None, float("inf")
+        for e in candidates:
+            if not getattr(e, "is_alive", False):
+                continue
+            if WorldQuery.zone_of(e.x, e.y) not in allowed:
+                continue
+            d2 = (e.x - self.x) ** 2 + (e.y - self.y) ** 2
+            if d2 < best_d2:
+                best, best_d2 = e, d2
+        self._target = best
+
+
+    def _target_outside_home_zone(self, target) -> bool:
+        """True when our current target has wandered out of zone."""
+        hx, hy = self._home_pos
+        rh2 = self._home_radius * self._home_radius
+        return (target.x - hx) ** 2 + (target.y - hy) ** 2 > rh2
+
+    # --- IMovable --------------------------------------------------------
+
+    def move(self, destination: tuple) -> None:
+        self._target = None
+
+    # --- IAttackable -----------------------------------------------------
+
+    def take_damage(self, amount: int, dtype: str = "phys") -> None:
+        if not self.is_alive:
+            return
+        dealt = max(1, int(amount) - self.DEFENSE)
+        self._hp -= dealt
+        if self._hp <= 0:
+            self._hp = 0
+            self.is_alive = False
+
+    # --- Entity ----------------------------------------------------------
+
+    def update(self, dt: float) -> None:
+        if not self.is_alive:
+            return
+
+        # Giảm gap search timer dùng để throttle gap search
+        if self._pf_gap_timer > 0:
+            self._pf_gap_timer -= 1
+
+        # Nếu squad có state, kiểm tra xem squad chuyển COMBAT chưa
+        if self._squad is not None:
+            squad_state = getattr(self._squad, '_state', 'COMBAT')
+            if squad_state == "COMBAT" and self._state == "IDLE":
+                self._state = "COMBAT"  # ← Wake up!
+
+        # Nếu lính ở trạng thái IDLE → hồi máu, đánh thức khi có titan
+        if self._state == "IDLE":
+            self._acquire_nearest_titan()
+            if self._target is not None:
+                self._state = "COMBAT"
+                self._heal_timer = 0.0  # titan xuất hiện → reset heal
+            else:
+                # Hồi máu từng tick khi trong tháp
+                if self._hp < self._max_hp:
+                    self._heal_timer += dt
+                    if self._heal_timer >= self.HEAL_TICK:
+                        self._heal_timer = 0.0
+                        self._hp = min(self._max_hp, self._hp + self.HEAL_RATE)
+                else:
+                    self._heal_timer = 0.0
+                self._animator.update(dt)
+                return
+
+        # MOVING state: di chuyển từ Tower A sang Tower B (transfer)
+        if self._state == "MOVING":
+            self._move_to_tower(dt)
+            self._animator.update(dt)
+            return
+
+        # Rock AoE pushback tween từ BeastTitan
+        if getattr(self, 'pushback_vx', 0.0) != 0.0 or getattr(self, 'pushback_vy', 0.0) != 0.0:
+            from characters.titans.attackstrategy import RockProjectile
+            RockProjectile.apply_pushback_tween(self, dt)
+        if self._atk_timer > 0:
+            self._atk_timer = max(0.0, self._atk_timer - dt)
+
+        if (self._target is None
+                or not getattr(self._target, "is_alive", False)
+                or self._target_outside_home_zone(self._target)):
+            self._acquire_nearest_titan()
+
+        target = self._target
+        if target is None:
+            if self._homeless:
+                # Mất tháp → không có nơi về, đứng yên tại chỗ chờ titan
+                if self._animator.state != "idle":
+                    self._animator.set_state("idle")
+                self._animator.update(dt)
+                return
+            self._state = "RETREAT"  # ← Chuyển sang RETREAT
+            self._retreat_into_home(dt)
+            self._animator.update(dt)
+            return
+
+        if getattr(target, 'ENTITY_TYPE', '') == 'titan':
+            if hasattr(target, '_DISPLAY_SIZE'):
+                target_y = target.y + (target._DISPLAY_SIZE / 2.0)
+            elif hasattr(target, '_FRAME_SIZE'):
+                target_y = target.y + (target._FRAME_SIZE / 2.0)
+            else:
+                target_y = target.y + 45.0
+        else:
+            target_y = target.y
+
+        dx = target.x - self.x
+        dy = target_y - self.y
+        dist = math.hypot(dx, dy)
+        if abs(dx) > 0.5:
+            self._animator.set_facing(dx > 0)
+
+        from systems.world_query import WorldQuery
+        same_zone = WorldQuery.same_zone(self.x, self.y, target.x, target.y, strict=True, strict_margin=24.0)
+
+        # Lấy gap cached từ frame trước
+        gap = self._pf_cached_gap
+        is_near_gap = False
+        if gap is not None:
+            cx, cy, _ = gap
+            # Nếu cách tâm lỗ dưới 48px, coi như vẫn đang chui lỗ (chưa thoát hẳn)
+            is_near_gap = (self.x - cx) ** 2 + (self.y - cy) ** 2 < 2304.0
+
+        # Muốn tấn công phải chung vùng (cùng zone) và đã thoát khỏi lỗ hổng hoàn toàn.
+        if not same_zone or is_near_gap:
+            # Khác vùng hoặc đang thoát lỗ: BẮT BUỘC tìm lỗ và lách qua, không cố đâm thẳng tường để tránh trượt (slide) vô tận.
+            if not is_near_gap and getattr(self, '_pf_gap_timer', 0) <= 0:
+                from systems.world_query import WorldQuery
+                self._pf_cached_gap = WorldQuery.find_nearest_gap_center(
+                    self.x, self.y, target.x, target_y, 3000.0, min_sections=1)
+                self._pf_gap_timer = 10
+            gap = self._pf_cached_gap
+            if gap is not None:
+                from systems.pathmove import gap_aim, follow_path
+                aim_x, aim_y, is_in_hole = gap_aim(self.x, self.y, target.x, target_y, gap,
+                                       self.WALL_RADIUS, align_tol=11.0)
+                follow_path(self, aim_x, aim_y, self.SPEED, dt,
+                            radius=8.0, collide_radius=0.0 if is_in_hole else 12.0,
+                            is_passing_gap=True, gap_center=gap)
+            else:
+                # Không có lỗ, đi thẳng tới vách tường và trượt (chấp nhận kẹt)
+                from systems.pathmove import follow_path
+                follow_path(self, target.x, target_y, self.SPEED, dt,
+                            radius=8.0, collide_radius=self.WALL_RADIUS)
+            if self._animator.state != "walk":
+                self._animator.set_state("walk")
+        elif dist > self.ATTACK_RANGE:
+            # Chung vùng nhưng xa ngoài tầm đánh -> đi thẳng tới mục tiêu
+            from systems.pathmove import follow_path
+            follow_path(self, target.x, target_y, self.SPEED, dt,
+                        radius=8.0, collide_radius=self.WALL_RADIUS)
+            if self._animator.state != "walk":
+                self._animator.set_state("walk")
+        else:
+            # Chung vùng và trong tầm -> tấn công
+            if self._atk_timer <= 0:
+                self._do_attack(target)
+                self._atk_timer = self.ATTACK_COOLDOWN
+
+        self._animator.update(dt)
+
+    def _retreat_into_home(self, dt: float) -> None:
+        """Về tháp, NÉ TƯỜNG (đi qua lỗ vỡ, không xuyên tường). Tới sát tháp → IDLE."""
+        hx, hy = self._home_pos
+        d = math.hypot(hx - self.x, hy - self.y)
+        if d > self.HOME_VANISH_DIST_PX:
+            if abs(hx - self.x) > 0.5:
+                self._animator.set_facing(hx > self.x)
+            from systems.world_query import WorldQuery
+            
+            # Rescue: Nếu lính đã về gần tháp (d <= 120) và cọ sát vào tường,
+            # coi như đã về tới đích, đứng gác tại chỗ (giữ nguyên logic gốc).
+            if d <= 120.0 and WorldQuery.is_wall_blocked(self.x, self.y, self.WALL_RADIUS + 2.0):
+                self._state = "IDLE"
+                self._target = None
+                self._heal_timer = 0.0
+                self._animator.set_state("idle")
+                return
+                
+            same_zone = WorldQuery.same_zone(self.x, self.y, hx, hy, strict=True, strict_margin=24.0)
+
+            gap = self._pf_cached_gap
+            is_near_gap = False
+            if gap is not None:
+                cx, cy, _ = gap
+                is_near_gap = (self.x - cx) ** 2 + (self.y - cy) ** 2 < 2304.0
+
+            if not same_zone or is_near_gap:
+                if not is_near_gap and self._pf_gap_timer <= 0:
+                    self._pf_cached_gap = WorldQuery.find_nearest_gap_center(
+                        self.x, self.y, hx, hy, 3000.0, min_sections=1)
+                    self._pf_gap_timer = 10
+                gap = self._pf_cached_gap
+                if gap is not None:
+                    from systems.pathmove import gap_aim, follow_path
+                    aim_x, aim_y, is_in_hole = gap_aim(self.x, self.y, hx, hy, gap,
+                                           self.WALL_RADIUS, align_tol=11.0)
+                    follow_path(self, aim_x, aim_y, self.SPEED, dt,
+                                radius=self.BODY_RADIUS,
+                                collide_radius=0.0 if is_in_hole else 12.0,
+                                is_passing_gap=True, gap_center=gap)
+                else:
+                    from systems.pathmove import follow_path
+                    follow_path(self, hx, hy, self.SPEED, dt,
+                                radius=self.BODY_RADIUS,
+                                collide_radius=self.WALL_RADIUS,
+                                ignore_buffer=True)
+                if self._animator.state != "walk":
+                    self._animator.set_state("walk")
+            else:
+                from systems.pathmove import follow_path
+                res = follow_path(self, hx, hy, self.SPEED, dt,
+                                  radius=self.BODY_RADIUS,
+                                  collide_radius=self.WALL_RADIUS,
+                                  ignore_buffer=True)
+                
+                # Rescue: Nếu dường như đã về sát tháp nhưng vô tình kẹt cạnh tường
+                if res == 'blocked' and d <= 120.0:
+                    self._state = "IDLE"
+                    self._target = None
+                    self._heal_timer = 0.0
+                    self._animator.set_state("idle")
+                    return
+                if self._animator.state != "walk":
+                    self._animator.set_state("walk")
+            return
+        self._state = "IDLE"
+        self._target = None
+        self._heal_timer = 0.0
+        self._animator.set_state("idle")
+
+    def _move_to_tower(self, dt: float) -> None:
+        """Di chuyển từ Tower A sang Tower B (transfer). Né tường, không chủ động attack."""
+        if self._transfer_target is None:
+            self._state = "IDLE"
+            self._heal_timer = 0.0
+            return
+
+        tx = getattr(self._transfer_target, 'x', self.x)
+        ty = getattr(self._transfer_target, 'y', self.y)
+        # Tower dùng AGGRO_RADIUS; fallback home_radius / 600
+        t_radius = getattr(self._transfer_target, 'AGGRO_RADIUS', None)
+        if t_radius is None:
+            t_radius = getattr(self._transfer_target, 'home_radius', 600.0)
+
+        dx, dy = tx - self.x, ty - self.y
+        dist = math.hypot(dx, dy)
+
+        # Đã vào được phạm vi của Tower B → arrive
+        # Dùng khoảng cố định 120px thay vì AGGRO_RADIUS (600px) để tránh
+        # lính "arrive" ngay lập tức khi tháp A và tháp B ở gần nhau.
+        if dist <= 120.0:
+            self._home_pos = (float(tx), float(ty))
+            self._home_radius = float(t_radius)
+            self._transfer_target = None
+            self._state = "COMBAT"
+            self._target = None
+            # Đánh thức squad sang COMBAT để cơ chế wake hoạt động về sau
+            if self._squad is not None:
+                self._squad._state = "COMBAT"
+            return
+
+        # Di chuyển tới Tower B theo A*
+        if abs(dx) > 0.5:
+            self._animator.set_facing(dx > 0)
+            
+        # Tìm đường bằng A* (chỉ tính 1 lần cho mỗi lệnh transfer)
+        if getattr(self, '_pf_target_id', None) != id(self._transfer_target) or not hasattr(self, '_transfer_path'):
+            from systems.pathfinding import AStarPathfinder
+            from systems.world_query import WorldQuery
+            self._transfer_path = AStarPathfinder.find_path(
+                self.x, self.y, tx, ty,
+                radius=self.BODY_RADIUS, buffer=12.0
+            )
+            self._pf_target_id = id(self._transfer_target)
+            # Tháp nguồn nằm trên tường → wall section tại đó + 2 tile mỗi bên (192px)
+            # bị bypass collision khi lính di chuyển, tránh lính bị kẹt do A* route
+            # qua mặt tường đối diện (150px exception tạo path xuyên tường).
+            # A* vẫn dùng chúng làm vật cản — chỉ bỏ cho follow_path vật lý.
+            ox, oy = self._original_home
+            self._transfer_wall_exclude = {
+                w for w in getattr(WorldQuery, '_wall_refs', [])
+                if (math.hypot(getattr(w, 'x', 0) - ox, getattr(w, 'y', 0) - oy) <= 192.0
+                    or math.hypot(getattr(w, 'x', 0) - tx, getattr(w, 'y', 0) - ty) <= 192.0)
+            }
+
+        if self._transfer_path:
+            wp_x, wp_y = self._transfer_path[0]
+            # Nếu đã đến gần waypoint hiện tại, chuyển sang waypoint tiếp theo
+            if math.hypot(wp_x - self.x, wp_y - self.y) < 60.0:
+                self._transfer_path.pop(0)
+                if self._transfer_path:
+                    wp_x, wp_y = self._transfer_path[0]
+
+            from systems.pathmove import follow_path
+            dx_t, dy_t = tx - self.x, ty - self.y
+            dist_t = math.hypot(dx_t, dy_t)
+            is_last = len(self._transfer_path) <= 1
+
+            follow_path(self, wp_x, wp_y, self.SPEED, dt,
+                        radius=self.BODY_RADIUS,
+                        collide_radius=self.WALL_RADIUS,
+                        exclude=getattr(self, '_transfer_wall_exclude', None),
+                        ignore_buffer=is_last and dist_t < 200.0)
+                        
+        if self._animator.state != "walk":
+            self._animator.set_state("walk")
+
+    def _do_attack(self, target) -> None:
+        """Melee: hit the target directly. Ranged subclasses override."""
+        self._animator.set_state("attack")
+        target.take_damage(self._damage, "phys")
+        ai = getattr(target, '_ai', None)
+        if ai is not None:
+            ai.notify_attacked(self)
+
+    def draw(self, screen) -> None:
+        frame = self._animator.current_frame()
+        sprite_h = self.BODY_RADIUS * 2
+        if frame is not None:
+            rect = frame.get_rect(midbottom=(int(self.x), int(self.y)))
+            screen.blit(frame, rect)
+            sprite_h = frame.get_height()
+        else:
+            pygame.draw.circle(
+                screen, self.BODY_COLOR,
+                (int(self.x), int(self.y) - self.BODY_RADIUS), self.BODY_RADIUS)
+            pygame.draw.circle(
+                screen, (255, 255, 255),
+                (int(self.x), int(self.y) - self.BODY_RADIUS), self.BODY_RADIUS, 1)
+        bar_w = 26
+        ratio = self._hp / self._max_hp if self._max_hp else 0.0
+        bx = int(self.x) - bar_w // 2
+        by = int(self.y) - sprite_h - 6
+        try:
+            pygame.draw.rect(screen, (120, 20, 20), (bx, by, bar_w, 4))
+            pygame.draw.rect(screen, (60, 210, 90),
+                             (bx, by, int(bar_w * ratio), 4))
+            if self.is_taunting:
+                pygame.draw.circle(screen, (230, 180, 70),
+                                   (int(self.x), int(self.y) - self.BODY_RADIUS),
+                                   self.BODY_RADIUS + 6, 1)
+        except (AttributeError, pygame.error):
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Concrete soldier types
+# ---------------------------------------------------------------------------
+
+class ArcherSoldier(Soldier):
+    """Ranged, high damage, fragile."""
+
+    NAME = "Archer"
+    SPRITE_FOLDER = os.path.join(_SPRITES_DIR, "Archer")
+    SPRITE_FRAMES = ac.ARCHER_SPRITE_FRAMES
+    FRAME_SIZE = ac.FRAME_SIZE_ARCHER
+    TARGET_HEIGHT_PX = 30
+
+    BASE_HP = 40
+    DEFENSE = 0
+    SPEED = 70.0
+    ATTACK_DAMAGE = 30
+    ATTACK_RANGE = 220.0
+    ATTACK_COOLDOWN = 1.0
+    IS_RANGED = True
+    BODY_COLOR = (90, 200, 120)
+
+    def _do_attack(self, target) -> None:
+        from systems.world_query import WorldQuery
+        from characters.soldiers.projectile import Arrow
+        self._animator.set_state("attack")
+        arrow = Arrow(self.x, self.y - 18, target, self._damage,
+                      shooter=self, headless=self._headless)
+        WorldQuery.spawn_entity(arrow)
+
+
+class LancerSoldier(Soldier):
+    """Fast, medium defense, damage below the archer."""
+
+    NAME = "Lancer"
+    SPRITE_FOLDER = os.path.join(_SPRITES_DIR, "Lancer")
+    SPRITE_FRAMES = ac.LANCER_SPRITE_FRAMES
+    FRAME_SIZE = ac.FRAME_SIZE_LANCER
+    TARGET_HEIGHT_PX = 44
+
+    BASE_HP = 75
+    DEFENSE = 3
+    SPEED = 135.0
+    ATTACK_DAMAGE = 18
+    ATTACK_RANGE = 44.0
+    ATTACK_COOLDOWN = 0.6
+    BODY_COLOR = (110, 150, 235)
+
+
+class WarriorSoldier(Soldier):
+    """Tanky, slow, low damage — TAUNTS to pull titan aggro."""
+
+    NAME = "Warrior"
+    SPRITE_FOLDER = os.path.join(_SPRITES_DIR, "Warrior")
+    SPRITE_FRAMES = ac.WARRIOR_SOLDIER_SPRITE_FRAMES
+    FRAME_SIZE = ac.FRAME_SIZE_WARRIOR_SOLDIER
+    TARGET_HEIGHT_PX = 36
+
+    BASE_HP = 170
+    DEFENSE = 8
+    SPEED = 48.0
+    ATTACK_DAMAGE = 10
+    ATTACK_RANGE = 38.0
+    ATTACK_COOLDOWN = 1.0
+    TAUNTS = True
+    BODY_COLOR = (210, 140, 80)
+
+
+SOLDIER_TYPES: dict = {
+    "Archer": ArcherSoldier,
+    "Lancer": LancerSoldier,
+    "Warrior": WarriorSoldier,
+}
