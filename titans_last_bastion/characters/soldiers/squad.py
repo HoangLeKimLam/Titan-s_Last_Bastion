@@ -35,6 +35,21 @@ class Squad:
                  home_pos: tuple | None = None,
                  home_radius: float = 600.0,
                  no_formation: bool = False) -> None:
+        """Tạo `size` lính CÙNG LOẠI, rải theo đội hình hex quanh `base_pos`.
+
+        Tham số:
+            soldier_type: khoá tra `SOLDIER_TYPES` ('Warrior'/'Archer'/'Lancer').
+                Sai khoá → `ValueError` ngay (lỗi cấu hình, nên raise sớm).
+            base_pos: điểm SPAWN (tâm đội hình).
+            home_pos: THÁP NHÀ chung cho cả squad — None → dùng `base_pos`.
+            no_formation: True → mọi lính chồng CÙNG 1 điểm (offset (0,0)) thay
+                vì rải theo `formation_offsets()` — dùng khi cần spawn gọn/test.
+
+        Mỗi lính được gắn NGƯỢC `soldier._squad = self` — cơ chế 2 chiều để
+        `Soldier.update()` đọc được `squad._state` (đánh thức khi squad chuyển COMBAT).
+
+        Chỉ số: SQUAD_SIZE (10), SQUAD_SPACING (52px).
+        """
         if soldier_type not in SOLDIER_TYPES:
             raise ValueError(f"Unknown soldier type: {soldier_type!r}")
         self.soldier_type = soldier_type
@@ -63,6 +78,7 @@ class Squad:
 
     @property
     def alive_members(self) -> list:
+        """List lính còn sống trong squad — dùng để đếm quân số thật/kiểm tra sạch quân."""
         return [s for s in self.members if s.is_alive]
 
     @property

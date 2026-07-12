@@ -3,13 +3,13 @@ from characters.soldiers import (
     SOLDIER_TYPES, Squad, deploy_squad,
 )
 from characters.commanders import (
-    Commander, ErenCommander, MikasaCommander, ArminCommander,
+    Commander, ErenCommander, MikasaCommander,
     COMMANDER_TYPES,
 )
 
 __all__ = [
     "Soldier", "ArcherSoldier", "LancerSoldier", "WarriorSoldier",
     "SOLDIER_TYPES", "Squad", "deploy_squad",
-    "Commander", "ErenCommander", "MikasaCommander", "ArminCommander",
+    "Commander", "ErenCommander", "MikasaCommander",
     "COMMANDER_TYPES",
 ]

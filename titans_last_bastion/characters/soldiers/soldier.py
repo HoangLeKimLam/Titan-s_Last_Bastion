@@ -10,12 +10,24 @@ from core.entity import Entity
 from core.interfaces import IAttackable, IMovable
 from characters.soldiers.animation import CommanderAnimator, load_clips
 from characters.soldiers import assets_config as ac
+from config import balance
 
 _SPRITES_DIR = os.path.join(os.path.dirname(__file__), "sprites")
 
 
 class Soldier(Entity, IAttackable, IMovable):
-    """Abstract base for all ally soldiers."""
+    """Lớp cha trừu tượng của mọi lính phe phòng thủ (Warrior/Archer/Lancer).
+
+    Máy trạng thái `_state` (5 trạng thái, xem chi tiết ở `update()`):
+        COMBAT  — đang săn titan / đánh nhau.
+        RETREAT — không có titan trong tầm → về THÁP NHÀ để hồi máu.
+        IDLE    — đã về tới tháp, đứng gác + hồi máu, chờ titan xuất hiện lại.
+        MOVING  — đang được ĐIỀU CHUYỂN từ tháp A sang tháp B (transfer).
+        DEAD    — is_alive=False (không phải giá trị `_state` thật, chỉ là quy ước).
+
+    Class con (Warrior/Archer/Lancer) chỉ cần ghi đè các hằng
+    BASE_HP/SPEED/ATTACK_*/BODY_COLOR — toàn bộ logic hành vi nằm ở đây.
+    """
 
     ENTITY_TYPE: str = "soldier"
     FACTION: str = "ally"
@@ -28,20 +40,20 @@ class Soldier(Entity, IAttackable, IMovable):
     TARGET_HEIGHT_PX: int = 42
 
     # --- Subclass combat stats ------------------------------------------
-    BASE_HP: int = 60
-    DEFENSE: int = 0
-    SPEED: float = 90.0
-    ATTACK_DAMAGE: int = 15
-    ATTACK_RANGE: float = 42.0
-    ATTACK_COOLDOWN: float = 1.0
+    BASE_HP: int = balance.SOLDIER_BASE_HP
+    DEFENSE: int = balance.SOLDIER_DEFENSE
+    SPEED: float = balance.SOLDIER_SPEED
+    ATTACK_DAMAGE: int = balance.SOLDIER_ATTACK_DAMAGE
+    ATTACK_RANGE: float = balance.SOLDIER_ATTACK_RANGE
+    ATTACK_COOLDOWN: float = balance.SOLDIER_ATTACK_COOLDOWN
     IS_RANGED: bool = False
     TAUNTS: bool = False
 
     HOME_VANISH_DIST_PX: float = 60.0
 
     # Hồi máu khi ở trong tháp (IDLE)
-    HEAL_RATE: int  = 5    # HP hồi mỗi tick
-    HEAL_TICK: float = 2.0 # giây giữa mỗi tick
+    HEAL_RATE: int  = balance.SOLDIER_HEAL_RATE    # HP hồi mỗi tick
+    HEAL_TICK: float = balance.SOLDIER_HEAL_TICK # giây giữa mỗi tick
 
     BODY_COLOR: tuple = (90, 160, 220)
     BODY_RADIUS: int = 10
@@ -57,6 +69,31 @@ class Soldier(Entity, IAttackable, IMovable):
                  headless: bool = False,
                  home_pos: tuple | None = None,
                  home_radius: float = 600.0) -> None:
+        """Khởi tạo lính tại (x,y), gắn THÁP NHÀ, áp buff trại lính, nạp animation.
+
+        Tham số:
+            target: titan nhắm sẵn (thường None — lính tự tìm qua `_acquire_nearest_titan`).
+            headless: True khi test/CI không display.
+            home_pos: vị trí THÁP NHÀ — lính RETREAT về đây khi hết titan. None →
+                dùng chính (x,y) làm nhà.
+            home_radius: bán kính phát hiện titan quanh nhà (mặc định 600px).
+
+        **Áp buff trại lính NGAY LÚC SPAWN** (không phải lazy): quét
+        `TrainingCamp` đầu tiên trong `WorldQuery`, nhân `hp_mult`/`dmg_mult` vào
+        `_max_hp`/`_damage`. Bọc try/except NGẦM (`except: pass`) — WorldQuery
+        chưa sẵn sàng lúc khởi tạo sớm thì lính vẫn tạo được với stat GỐC, không crash.
+
+        State quan trọng khác:
+            `_can_heal` — True mặc định; antiheal (Wolf) tắt VĨNH VIỄN tới khi chết.
+            `_homeless` — True khi tháp chủ bị phá, lính không còn nơi về.
+            `_zones` — vùng được phép phát hiện titan (gán từ tháp chủ).
+            `_pf_gap_timer`/`_pf_cached_gap` — CACHE + THROTTLE tìm lỗ tường: chỉ
+                gọi lại `WorldQuery.find_nearest_gap_center()` (đắt) mỗi 10 frame,
+                dùng lại kết quả cache giữa các lần — tránh lag khi đông lính.
+
+        Chỉ số: balance.SOLDIER_BASE_HP/_SPEED/_ATTACK_DAMAGE/_ATTACK_RANGE/
+        _ATTACK_COOLDOWN, balance.SOLDIER_HEAL_RATE/_HEAL_TICK.
+        """
         super().__init__(x, y)
         self._max_hp = int(self.BASE_HP)
         self._hp = int(self.BASE_HP)
@@ -88,6 +125,8 @@ class Soldier(Entity, IAttackable, IMovable):
         self._home_radius: float = float(home_radius)
         self._transfer_target: object = None  # Tower đích (khi MOVING)
         self._heal_timer: float = 0.0         # tích lũy khi IDLE, reset khi ra chiến
+        self._can_heal: bool = True           # False vĩnh viễn sau khi dính đòn
+                                               # antiheal (Wolf) — cho tới khi chết
         self._original_home: tuple = self._home_pos  # Home gốc (Tower A)
         self._zones: tuple = ()  # Vùng cho phép phát hiện titan (theo tháp chủ)
         self._homeless: bool = False  # True khi tháp chủ bị phá (không nơi về)
@@ -109,19 +148,24 @@ class Soldier(Entity, IAttackable, IMovable):
 
     @property
     def hp(self) -> int:
+        """HP hiện tại (đã tính buff trại lính, nếu có)."""
         return self._hp
 
     @property
     def max_hp(self) -> int:
+        """HP tối đa (đã tính buff trại lính)."""
         return self._max_hp
 
     @property
     def is_taunting(self) -> bool:
+        """True nếu lính này KÉO AGGRO titan (chỉ Warrior có `TAUNTS=True`) và còn sống."""
         return self.TAUNTS and self.is_alive
 
     # --- targeting -------------------------------------------------------
 
     def set_target(self, titan) -> None:
+        """Gán mục tiêu THỦ CÔNG — dùng bởi caller ngoài (vd dispatch system);
+        `update()` vẫn có thể tự đổi mục tiêu sau đó qua `_acquire_nearest_titan`."""
         self._target = titan
 
     def _acquire_nearest_titan(self) -> None:
@@ -176,13 +220,35 @@ class Soldier(Entity, IAttackable, IMovable):
     # --- IMovable --------------------------------------------------------
 
     def move(self, destination: tuple) -> None:
+        """API `IMovable` — hiện tại CHỈ xoá mục tiêu hiện tại (KHÔNG dịch chuyển thật).
+
+        Lính không có cơ chế "đi tới điểm tuỳ ý" như tướng — di chuyển của lính
+        HOÀN TOÀN do máy trạng thái trong `update()` quyết định (đuổi titan / về
+        nhà / transfer). Gọi `move()` chỉ có tác dụng buộc lính TÌM LẠI mục tiêu
+        ở frame tiếp theo.
+        """
         self._target = None
 
     # --- IAttackable -----------------------------------------------------
 
     def take_damage(self, amount: int, dtype: str = "phys") -> None:
+        """Nhận damage — trừ giáp (`DEFENSE`), kích debuff antiheal nếu dtype khớp.
+
+        Thuật toán:
+          1. Đã chết → không làm gì.
+          2. `dtype == 'antiheal'` (đòn Wolf) → `_can_heal = False` VĨNH VIỄN
+             (không có gì đặt lại True — chỉ hết hiệu lực khi lính CHẾT và bị xoá,
+             lần train mới tạo object mới với `_can_heal=True` từ đầu).
+          3. `dealt = max(1, amount - DEFENSE)` — LUÔN ăn ít nhất 1 damage dù giáp
+             cao tới đâu (không có "miễn nhiễm tuyệt đối").
+          4. HP <= 0 → kẹp về 0, `is_alive = False`.
+
+        Chỉ số: balance.SOLDIER_DEFENSE (base), riêng từng loại lính override.
+        """
         if not self.is_alive:
             return
+        if dtype == 'antiheal':
+            self._can_heal = False   # vĩnh viễn — không tự hồi lại (Wolf)
         dealt = max(1, int(amount) - self.DEFENSE)
         self._hp -= dealt
         if self._hp <= 0:
@@ -192,6 +258,44 @@ class Soldier(Entity, IAttackable, IMovable):
     # --- Entity ----------------------------------------------------------
 
     def update(self, dt: float) -> None:
+        """VÒNG UPDATE CHÍNH — máy trạng thái 4 nhánh (COMBAT ngầm định + 3 return sớm).
+
+        Thuật toán, theo thứ tự:
+          1. Chết → không làm gì.
+          2. Đếm ngược `_pf_gap_timer` (throttle tìm lỗ tường).
+          3. **Squad đánh thức**: squad chuyển sang COMBAT mà lính đang IDLE →
+             đánh thức lính theo (`_state = "COMBAT"`).
+          4. **`_state == "IDLE"`** (return sớm): thử tìm titan
+             (`_acquire_nearest_titan`) — có → chuyển COMBAT, reset heal timer.
+             Không có → HỒI MÁU theo tick (`HEAL_RATE` mỗi `HEAL_TICK` giây),
+             CHỈ khi `_can_heal` (chưa dính antiheal). Rồi `return`.
+          5. **`_state == "MOVING"`** (return sớm): `_move_to_tower()` (transfer
+             giữa 2 tháp qua A*), rồi `return`.
+          6. Còn lại coi như COMBAT (state có thể vẫn ghi "COMBAT" hoặc chuyển
+             "RETREAT" ngay dưới):
+             a. Áp pushback từ đá Beast (nếu có).
+             b. Đếm ngược `_atk_timer`.
+             c. Mục tiêu chết/mất/RA KHỎI VÙNG NHÀ → `_acquire_nearest_titan()`
+                tìm lại.
+             d. **KHÔNG có mục tiêu**: `_homeless` (tháp chủ đã bị phá) → đứng yên
+                tại chỗ (KHÔNG RETREAT — không còn nhà để về), rồi `return`.
+                Còn nhà → chuyển `_state = "RETREAT"`, gọi `_retreat_into_home()`, `return`.
+             e. **CÓ mục tiêu**: tính `target_y` (với titan, cộng nửa chiều cao
+                sprite để nhắm vào GIỮA THÂN thay vì chân — dùng `_DISPLAY_SIZE`
+                hoặc `_FRAME_SIZE` tuỳ loại titan có).
+                - Kiểm tra `same_zone` (cùng vùng tường) VÀ có đang "gần lỗ hổng"
+                  hay không (cache `_pf_cached_gap`, coi là còn trong lỗ nếu cách
+                  tâm lỗ < 48px).
+                - **Khác vùng HOẶC đang thoát lỗ**: BẮT BUỘC tìm lỗ tường mà lách
+                  qua (`gap_aim` + `follow_path` với `is_passing_gap=True`) — CỐ
+                  Ý không đâm thẳng tường để tránh trượt vô tận dọc tường. Không
+                  có lỗ → đành đi thẳng, chấp nhận có thể kẹt.
+                - **Cùng vùng nhưng NGOÀI tầm đánh**: đi thẳng tới mục tiêu.
+                - **Cùng vùng VÀ trong tầm**: hết cooldown → `_do_attack(target)`.
+
+        Chỉ số: balance.SOLDIER_HEAL_RATE/_HEAL_TICK, balance.<TYPE>_ATTACK_RANGE/_ATTACK_COOLDOWN.
+        Liên kết: `systems/pathmove.py::gap_aim/follow_path`, `WorldQuery.same_zone/find_nearest_gap_center`.
+        """
         if not self.is_alive:
             return
 
@@ -212,8 +316,8 @@ class Soldier(Entity, IAttackable, IMovable):
                 self._state = "COMBAT"
                 self._heal_timer = 0.0  # titan xuất hiện → reset heal
             else:
-                # Hồi máu từng tick khi trong tháp
-                if self._hp < self._max_hp:
+                # Hồi máu từng tick khi trong tháp — bỏ qua nếu dính antiheal
+                if self._hp < self._max_hp and self._can_heal:
                     self._heal_timer += dt
                     if self._heal_timer >= self.HEAL_TICK:
                         self._heal_timer = 0.0
@@ -467,7 +571,15 @@ class Soldier(Entity, IAttackable, IMovable):
             self._animator.set_state("walk")
 
     def _do_attack(self, target) -> None:
-        """Melee: hit the target directly. Ranged subclasses override."""
+        """Đánh CẬN CHIẾN mặc định — trúng NGAY, không có bay đạn. Archer override để bắn tên.
+
+        Thuật toán: chuyển animation "attack" → `target.take_damage(_damage,
+        'phys')` NGAY LẬP TỨC (không độ trễ bay đạn) → báo AI titan biết vừa bị
+        đánh (`notify_attacked`) để nó có thể phản đòn.
+
+        Tham số: target — titan đang đánh.
+        Chỉ số: balance.<TYPE>_ATTACK_DAMAGE.
+        """
         self._animator.set_state("attack")
         target.take_damage(self._damage, "phys")
         ai = getattr(target, '_ai', None)
@@ -475,6 +587,12 @@ class Soldier(Entity, IAttackable, IMovable):
             ai.notify_attacked(self)
 
     def draw(self, screen) -> None:
+        """Vẽ sprite lính + HP bar (chỉ hiện khi bị thương) + icon "đói"/"thiếu vũ khí".
+
+        Không có frame → vẽ vòng tròn màu `BODY_COLOR` thay thế (fallback).
+        HP bar chỉ vẽ khi `_hp < _max_hp` (lính đầy máu không cần thanh máu che khuất).
+        CHỈ ĐỒ HOẠ.
+        """
         frame = self._animator.current_frame()
         sprite_h = self.BODY_RADIUS * 2
         if frame is not None:
@@ -517,16 +635,25 @@ class ArcherSoldier(Soldier):
     FRAME_SIZE = ac.FRAME_SIZE_ARCHER
     TARGET_HEIGHT_PX = 30
 
-    BASE_HP = 40
-    DEFENSE = 0
-    SPEED = 70.0
-    ATTACK_DAMAGE = 30
-    ATTACK_RANGE = 220.0
-    ATTACK_COOLDOWN = 1.0
+    BASE_HP = balance.ARCHER_HP
+    DEFENSE = balance.ARCHER_DEFENSE
+    SPEED = balance.ARCHER_SPEED
+    ATTACK_DAMAGE = balance.ARCHER_ATTACK_DAMAGE
+    ATTACK_RANGE = balance.ARCHER_ATTACK_RANGE
+    ATTACK_COOLDOWN = balance.ARCHER_ATTACK_COOLDOWN
     IS_RANGED = True
     BODY_COLOR = (90, 200, 120)
 
     def _do_attack(self, target) -> None:
+        """Override TẦM XA — bắn mũi tên BAY tới thay vì trúng ngay (khác `Soldier._do_attack`).
+
+        Spawn 1 `Arrow` (projectile.py) tại vị trí Archer (lệch lên 18px, mô
+        phỏng cung nằm ở tay), giao cho `WorldQuery` quản lý bay + va chạm —
+        damage THẬT SỰ xảy ra khi mũi tên TỚI đích (trong `Arrow.update()`), KHÔNG
+        phải ngay lúc gọi hàm này.
+
+        Chỉ số: balance.ARCHER_ATTACK_DAMAGE, balance.ARROW_SPEED.
+        """
         from systems.world_query import WorldQuery
         from characters.soldiers.projectile import Arrow
         self._animator.set_state("attack")
@@ -544,12 +671,12 @@ class LancerSoldier(Soldier):
     FRAME_SIZE = ac.FRAME_SIZE_LANCER
     TARGET_HEIGHT_PX = 44
 
-    BASE_HP = 75
-    DEFENSE = 3
-    SPEED = 135.0
-    ATTACK_DAMAGE = 18
-    ATTACK_RANGE = 44.0
-    ATTACK_COOLDOWN = 0.6
+    BASE_HP = balance.LANCER_HP
+    DEFENSE = balance.LANCER_DEFENSE
+    SPEED = balance.LANCER_SPEED
+    ATTACK_DAMAGE = balance.LANCER_ATTACK_DAMAGE
+    ATTACK_RANGE = balance.LANCER_ATTACK_RANGE
+    ATTACK_COOLDOWN = balance.LANCER_ATTACK_COOLDOWN
     BODY_COLOR = (110, 150, 235)
 
 
@@ -562,12 +689,12 @@ class WarriorSoldier(Soldier):
     FRAME_SIZE = ac.FRAME_SIZE_WARRIOR_SOLDIER
     TARGET_HEIGHT_PX = 36
 
-    BASE_HP = 170
-    DEFENSE = 8
-    SPEED = 48.0
-    ATTACK_DAMAGE = 10
-    ATTACK_RANGE = 38.0
-    ATTACK_COOLDOWN = 1.0
+    BASE_HP = balance.WARRIOR_HP
+    DEFENSE = balance.WARRIOR_DEFENSE
+    SPEED = balance.WARRIOR_SPEED
+    ATTACK_DAMAGE = balance.WARRIOR_ATTACK_DAMAGE
+    ATTACK_RANGE = balance.WARRIOR_ATTACK_RANGE
+    ATTACK_COOLDOWN = balance.WARRIOR_ATTACK_COOLDOWN
     TAUNTS = True
     BODY_COLOR = (210, 140, 80)
 

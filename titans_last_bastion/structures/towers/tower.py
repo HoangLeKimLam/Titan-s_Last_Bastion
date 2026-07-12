@@ -2,6 +2,7 @@
 import math
 import os
 import pygame
+from systems.sound_system import SoundManager
 from core.entity import Entity
 from core.interfaces import IAttackable, IUpgradable
 from structures.towers.attackstrategy import (
@@ -16,12 +17,20 @@ from structures.towers.projectile import (
     WaterProjectile,
 )
 from characters.soldiers.soldier import SOLDIER_TYPES
+from config import balance
 
 _TOWER_IMG = None
 
 _TOWER_WIDTH = 85  # px — điều chỉnh chiều rộng, chiều cao tự tính theo tỉ lệ gốc
 
 def _get_tower_img():
+    """Nạp `tower.png` MỘT LẦN cho MỌI tháp đất (module-level cache, không phải class).
+
+    Mọi loại tháp (Basic/Electric/Water/Ice) dùng CHUNG 1 SPRITE THÂN THÁP —
+    khác biệt giữa các loại chỉ ở "badge" (đạn/hiệu ứng) vẽ đè lên trên (xem
+    `Tower.draw()`). Scale theo `_TOWER_WIDTH` (85px), chiều cao tự tính theo tỉ
+    lệ gốc để không méo ảnh. Lỗi nạp → tạo Surface rỗng cùng kích thước (không crash).
+    """
     global _TOWER_IMG
     if _TOWER_IMG is None:
         path = os.path.join(os.path.dirname(__file__), 'tower.png')
@@ -61,22 +70,57 @@ class Tower(Entity, IAttackable, IUpgradable):
 
     ENTITY_TYPE       = 'tower'
 
-    MAX_LEVEL         = 2
+    MAX_LEVEL         = balance.TOWER_MAX_LEVEL
     ORB_FIELD         = 'ore'
-    DMG_PER_ORB       = 5
-    LV2_DMG_THRESHOLD = 60
+    DMG_PER_ORB       = balance.TOWER_DMG_PER_ORB
+    LV2_DMG_THRESHOLD = balance.TOWER_LV2_DMG_THRESHOLD
 
     # --- Garrison / squad deployment constants ---------------------------
-    CAPACITY           : int   = 8      # max total squads stored
-    AGGRO_RADIUS       : float = 600.0  # px — titan inside → start event
-    WAVE_COOLDOWN      : float = 3.0    # s between waves in one event
-    EVENT_COOLDOWN     : float = 8.0    # s rest after a finished event
-    MAX_WAVES_PER_EVENT: int   = 3
+    CAPACITY           : int   = balance.TOWER_CAPACITY      # max total squads stored
+    AGGRO_RADIUS       : float = balance.TOWER_AGGRO_RADIUS  # px — titan inside → start event
+    WAVE_COOLDOWN      : float = balance.TOWER_WAVE_COOLDOWN    # s between waves in one event
+    EVENT_COOLDOWN     : float = balance.TOWER_EVENT_COOLDOWN    # s rest after a finished event
+    MAX_WAVES_PER_EVENT: int   = balance.TOWER_MAX_WAVES_PER_EVENT
 
     DEFAULT_GARRISON  : dict  = {}
     DEFAULT_WAVE_ORDER: tuple = ("Warrior", "Lancer", "Archer")
 
     def __init__(self, x: float, y: float, config: dict):
+        """Khởi tạo tháp từ `config` (bắt buộc) + toàn bộ state garrison/dispatch.
+
+        Tham số: config — dict {hp, damage, range, cooldown}. Class con LUÔN
+            truyền config CỤ THỂ của mình (vd BasicTower truyền {hp:300,...}),
+            KHÔNG có mặc định ở tầng base — nếu thiếu key thì fallback trong
+            `.get()` mới áp dụng.
+
+        Các cờ "buff vĩnh viễn" từ item túi đồ:
+            `_stun_immune`     — anti_stun: `stun()` thành no-op HOÀN TOÀN.
+            `_serum_buff`      — serum: MỌI đạn tháp bắn ra mang thêm hiệu ứng
+                giảm hồi máu Founding (xem `Projectile._apply_serum_debuff`).
+            `_anti_armor_buff` — anti_armor_ore: MỌI đạn tháp bắn ra dùng
+                dtype='anti_armor' (xuyên giáp ArmoredTitan hoàn toàn, xem
+                `Projectile._eff_dtype`), bất kể dtype gốc của loại đạn.
+            `_disarmed`        — hết đạn cụ thể: tắt bắn nhưng VẪN chứa/điều lính.
+
+        **GARRISON SYSTEM** (đóng quân trong tháp, điều lính ra đánh titan):
+          - `garrison: dict{type: count}` — số SQUAD mỗi loại đang chứa, khởi
+            tạo từ `DEFAULT_GARRISON` (class con override), rồi `_trim_to_capacity()`
+            cắt bớt nếu vượt `CAPACITY`.
+          - `_garrison_sizes: dict{type: [size,...]}` — LIST SONG SONG lưu SỐ
+            LƯỢNG THẬT mỗi squad (có thể < SQUAD_SIZE tiêu chuẩn nếu squad đã bị
+            hao hụt sau khi rút quân).
+          - `wave_order` — 3 slot loại lính LUÂN PHIÊN mỗi đợt (wave) trong 1 sự
+            kiện tấn công (event).
+          - Máy trạng thái dispatch: `_squad_state` ("idle"→"active"→"cooldown"),
+            `_wave_timer`/`_event_cd`/`_wave_index`/`_waves_done` (xem
+            `_update_squad_dispatch`).
+          - `_reserve_squads` — squad đã RÚT VỀ (lính "biến vào trong tháp") NHƯNG
+            VẪN GIỮ ENTITY THẬT (không xoá, không tạo lại) — tái xuất hiện đúng
+            những entity cũ khi có titan mới xuất hiện.
+
+        Chỉ số: balance.BASIC_TOWER_*/etc (do class con truyền qua config),
+        balance.TOWER_CAPACITY/_AGGRO_RADIUS/_WAVE_COOLDOWN/_EVENT_COOLDOWN/_MAX_WAVES_PER_EVENT.
+        """
         super().__init__(x, y)
         self._hp          = config.get('hp',       300)
         self._max_hp      = config.get('hp',       300)
@@ -87,6 +131,12 @@ class Tower(Entity, IAttackable, IUpgradable):
         self._shoot_timer = 0.0
         self._stun_timer  = 0.0
         self._disarmed    = False   # tắt vũ khí → không bắn (vẫn chứa/điều lính)
+        self._stun_immune = False   # anti_stun (item) — vĩnh viễn, stun() no-op
+        self._serum_buff  = False   # serum (item) — vĩnh viễn, mọi đạn mang thêm
+                                     # hiệu ứng giảm hồi máu Founding (xem Projectile)
+        self._anti_armor_buff = False   # anti_armor_ore (item) — vĩnh viễn, mọi
+                                     # đạn tháp này bắn ra dùng dtype='anti_armor'
+                                     # (xuyên giáp hoàn toàn, xem Projectile._eff_dtype)
         self._wall_name   = None    # 'maria'/'rose'/'sina' nếu đặt trên tường
         self._targeting: TowerTargetingStrategy = NearestTargeting()
 
@@ -124,14 +174,18 @@ class Tower(Entity, IAttackable, IUpgradable):
     # ── Strategy ─────────────────────────────────────────────────────
 
     def set_targeting(self, strategy: TowerTargetingStrategy):
+        """Đổi cách chọn mục tiêu (Strategy Pattern) — đổi được BẤT KỲ LÚC NÀO, kể
+        cả lúc runtime, không cần khởi tạo lại tháp."""
         self._targeting = strategy
 
     def get_targeting(self) -> TowerTargetingStrategy:
+        """Strategy chọn mục tiêu hiện tại (UI dùng hiển thị/cho phép đổi)."""
         return self._targeting
 
     # ── Garrison API (used by TowerMenu / HUD) ────────────────────────
 
     def total_garrison(self) -> int:
+        """Tổng SỐ SQUAD đang chứa (mọi loại lính cộng lại) — so với `CAPACITY`."""
         return sum(self.garrison.values())
 
     def set_garrison(self, soldier_type: str, count: int) -> bool:
@@ -161,6 +215,8 @@ class Tower(Entity, IAttackable, IUpgradable):
         return result
 
     def set_wave_slot(self, index: int, soldier_type: str) -> None:
+        """Đặt loại lính cho 1 SLOT wave (0..MAX_WAVES_PER_EVENT-1) — điều khiển
+        thứ tự lính xuất trận mỗi đợt tấn công. Chỉ số/loại sai → raise ngay."""
         if not 0 <= index < self.MAX_WAVES_PER_EVENT:
             raise IndexError(f"wave slot out of range: {index}")
         if soldier_type not in SOLDIER_TYPES:
@@ -178,9 +234,22 @@ class Tower(Entity, IAttackable, IUpgradable):
     # ── Orb upgrade ──────────────────────────────────────────────────
 
     def can_apply_orb(self) -> bool:
+        """True nếu tháp CHƯA đạt cấp tối đa — còn nhận orb nâng cấp được."""
         return self._level < self.MAX_LEVEL
 
     def apply_orb(self, amount: int = 1) -> bool:
+        """Nạp `amount` orb (tài nguyên `ORB_FIELD`) vào tháp — TĂNG STAT + có thể LÊN CẤP.
+
+        Thuật toán:
+          1. Đã max cấp → False ngay.
+          2. Tạo `ResourceBundle(**{ORB_FIELD: amount})` — mỗi loại tháp dùng
+             LOẠI ORE RIÊNG (`ORB_FIELD`: 'ore'/'electric_ore'/'water_ore'/'ice_ore').
+          3. Không đủ tài nguyên → False, KHÔNG trừ gì.
+          4. Đủ → trừ tài nguyên, gọi `_on_orb_applied()` (class con override để
+             tăng đúng stat của loại tháp đó) rồi `_check_levelup()`.
+
+        Trả về: bool — True = nạp thành công.
+        """
         if not self.can_apply_orb():
             return False
         from structures.buildings.resource_manager import ResourceManager
@@ -195,23 +264,48 @@ class Tower(Entity, IAttackable, IUpgradable):
         return True
 
     def _on_orb_applied(self, amount: int):
+        """HOOK — tăng damage theo `DMG_PER_ORB × amount`. Class con override để
+        tăng THÊM stat khác (chain damage, push radius, slow duration...)."""
         self._damage += self.DMG_PER_ORB * amount
 
     def _check_levelup(self):
+        """HOOK — lên cấp khi damage đạt `LV2_DMG_THRESHOLD`. Một số loại tháp
+        (IceTower) override để dùng ngưỡng khác (slow_duration) thay vì damage."""
         if self._level < self.MAX_LEVEL and self._damage >= self.LV2_DMG_THRESHOLD:
             self._level += 1
 
     # ── IUpgradable (không dùng — xài apply_orb()) ───────────────────
 
-    def upgrade(self): pass
+    def upgrade(self):
+        """No-op — API `IUpgradable` bắt buộc phải có, nhưng tháp KHÔNG dùng cơ
+        chế upgrade() chung; nâng cấp tháp đi qua `apply_orb()` riêng."""
+        pass
 
     def get_upgrade_cost(self):
+        """Trả `ResourceBundle()` rỗng — tháp không có "giá upgrade" cố định
+        (chi phí thực tế là `amount` orb truyền vào `apply_orb()`)."""
         from core.game_state import ResourceBundle
         return ResourceBundle()
 
     # ── Combat ───────────────────────────────────────────────────────
 
     def update(self, dt: float):
+        """Vòng update mỗi frame: badge animation → CHOÁNG (nếu có) → bắn → điều lính.
+
+        Thuật toán:
+          1. Có `_badge_anim` (hiệu ứng đạn hoạt hình trên đầu tháp) → tiến animation.
+          2. **CHOÁNG** (`_stun_timer > 0`): đếm ngược rồi `return` NGAY — KHÔNG
+             bắn, KHÔNG điều lính (đây là lý do đá Beast/Jump Stomp làm tháp "ngừng
+             hoạt động hoàn toàn", không chỉ ngừng bắn).
+          3. Đếm ngược `_shoot_timer`; hết → `_pick_target()` (uỷ quyền cho
+             `_targeting` strategy) → có mục tiêu → `shoot()` tạo projectile,
+             giao cho `WorldQuery.spawn_entity()` quản lý bay, nạp lại
+             `_shoot_timer = _cooldown`.
+          4. `_update_squad_dispatch(dt)` — máy trạng thái điều lính RIÊNG, chạy
+             SONG SONG với bắn (một tháp vừa bắn vừa điều quân).
+
+        Chỉ số: balance.<TOWER>_COOLDOWN.
+        """
         if self._badge_anim:
             self._badge_anim.update(dt)
         if self._stun_timer > 0:
@@ -228,13 +322,30 @@ class Tower(Entity, IAttackable, IUpgradable):
         self._update_squad_dispatch(dt)
 
     def shoot(self, target: IAttackable) -> BasicProjectile:
+        """HOOK — tạo 1 viên đạn BASIC (dtype='normal') nhắm `target`. Mọi class
+        con override để bắn đúng loại đạn của mình (Explosive/Electric/Water/Ice)."""
         return BasicProjectile(self.x, self.y, target, self._damage, 'normal',
                                shooter=self)
 
     def stun(self, duration: float):
+        """Làm CHOÁNG tháp trong `duration` giây — no-op HOÀN TOÀN nếu có item anti_stun.
+
+        Không CỘNG DỒN: `_stun_timer = max(hiện tại, duration)` — choáng 2 lần
+        liên tiếp không kéo dài hơn, chỉ LÀM MỚI về giá trị lớn hơn.
+        Nguồn gọi: `GroundSlamStrategy`/skill Jump Stomp (Colossal), đá Beast.
+        """
+        if self._stun_immune:
+            return
         self._stun_timer = max(self._stun_timer, duration)
 
     def take_damage(self, amount: int, dtype: str):
+        """Nhận damage — hết HP thì SẬP: publish event + XẢ TOÀN BỘ lính đang giấu trong tháp.
+
+        Thuật toán: trừ HP thẳng (KHÔNG có giáp ở tầng Tower base). HP<=0 →
+        `is_alive=False`, `spill_reserves()` (đẩy MỌI squad đang ẩn trong tháp ra
+        ngoài — chúng không biến mất theo tháp, được "giải phóng" khi tháp sập),
+        publish `'tower_destroyed'` (HUD/lính rút lui subscribe).
+        """
         self._hp -= amount
         if self._hp <= 0:
             self.is_alive = False
@@ -243,9 +354,16 @@ class Tower(Entity, IAttackable, IUpgradable):
             GameEventBus.get_instance().publish('tower_destroyed', {'tower': self})
 
     def get_garrison_pos(self) -> tuple:
+        """Điểm ĐỨNG GÁC của lính khi ở IDLE cạnh tháp (lệch phải 40px so với tâm tháp)."""
         return (self.x + 40, self.y)
 
     def draw(self, screen):
+        """Vẽ thân tháp (sprite CHUNG cho mọi loại) + badge riêng (đạn/hiệu ứng đè lên trên).
+
+        Badge ưu tiên: `_badge_anim` (hoạt hình, nếu có) > `_badge_sprite` (tĩnh).
+        Vị trí badge: căn giữa NGANG với tháp, lệch LÊN 1/4 chiều cao sprite thân.
+        CHỈ ĐỒ HOẠ.
+        """
         img = _get_tower_img()
         rect = img.get_rect(center=(int(self.x), int(self.y)))
         screen.blit(img, rect.topleft)
@@ -296,10 +414,25 @@ class Tower(Entity, IAttackable, IUpgradable):
         return (WorldQuery.zone_of(self.x, self.y),)
 
     def _in_allowed_zone(self, entity) -> bool:
+        """True nếu `entity` đứng trong 1 trong các vùng tháp được phép tương tác
+        (xem `allowed_zones()`)."""
         from systems.world_query import WorldQuery
         return WorldQuery.zone_of(entity.x, entity.y) in self.allowed_zones()
 
     def _pick_target(self):
+        """Chọn 1 titan để BẮN — quét tầm, lọc vùng, rồi uỷ quyền cho targeting strategy.
+
+        Thuật toán:
+          1. `_disarmed` (hết đạn) → None ngay, không bắn.
+          2. Quét mọi titan trong `_range` quanh tháp.
+          3. **LỌC VÙNG**: chỉ giữ titan nằm trong `allowed_zones()` — tháp KHÔNG
+             bắn xuyên qua tường vào vùng khác (trừ tháp gắn tường, được phép cả
+             2 phía nó giáp).
+          4. `_targeting.select_target()` (NearestTargeting mặc định, có thể đổi
+             qua `set_targeting()`) chọn 1 trong danh sách đã lọc.
+
+        Trả về: entity titan, hoặc None nếu không có mục tiêu hợp lệ.
+        """
         from systems.world_query import WorldQuery
         if getattr(self, '_disarmed', False):
             return None  # tháp tắt vũ khí → không bắn
@@ -358,6 +491,12 @@ class Tower(Entity, IAttackable, IUpgradable):
         zones = self.allowed_zones()
 
         def _clear_spot(s):
+            """Tìm vị trí THOÁNG (không kẹt tường) cho lính `s` khi tháp sập.
+
+            Thử vị trí offset theo đội hình gốc (`_slot_offset`) trước; nếu bị
+            tường chặn thì fallback về điểm base chung `(bx, by)` (đã xác nhận
+            thoáng ở bước trước đó trong `spill_reserves`).
+            """
             ox, oy = getattr(s, '_slot_offset', (0.0, 0.0))
             px, py = bx + ox, by + oy
             if not WorldQuery.is_wall_blocked(px, py, 10.0):
@@ -425,6 +564,34 @@ class Tower(Entity, IAttackable, IUpgradable):
         self._deployed_squads = remaining
 
     def _update_squad_dispatch(self, dt: float) -> None:
+        """MÁY TRẠNG THÁI ĐIỀU LÍNH — 3 trạng thái: idle → active → cooldown → idle.
+
+        Đây là "bộ não" của cơ chế garrison: tháp TỰ ĐỘNG phát hiện titan trong
+        `AGGRO_RADIUS`, thả lính ra đánh theo NHIỀU ĐỢT (wave), rồi nghỉ.
+
+        Thuật toán, MỖI FRAME:
+          0. `_absorb_idle_squads()` — lính đã đánh xong quay về + IDLE → HÚT VÀO
+             TRONG THÁP (biến khỏi bản đồ, giữ lại object để tái xuất sau).
+          1. **`_squad_state == "cooldown"`**: đếm ngược `_event_cd`
+             (`EVENT_COOLDOWN`), hết → về "idle". `return`.
+          2. **`_squad_state == "idle"`**: không có gì để thả (`_has_deployable()`
+             False) → chờ. Không có titan trong tầm → chờ. Có cả 2 → BẮT ĐẦU sự
+             kiện: chuyển "active", reset `_wave_index/_waves_done/_wave_timer`.
+          3. **`_squad_state == "active"`**:
+             a. **WIPE-TRIGGERS-NEXT-WAVE**: squad hiện tại đã CHẾT SẠCH (không
+                còn `is_alive`) và chưa hết số đợt → BỎ QUA thời gian chờ còn lại
+                (`_wave_timer = 0`) → thả đợt TIẾP THEO NGAY, không đợi hết
+                `WAVE_COOLDOWN`. (Squad chết sớm không phải đợi hết giờ mới có
+                lính mới ra.)
+             b. Đếm ngược `_wave_timer`; còn thời gian → chờ tiếp (`return`).
+             c. Titan đã rời khỏi tầm → `_end_event()` (kết thúc sớm).
+             d. `_spawn_next_wave(titan)` thất bại (hết quân) → `_end_event()`.
+             e. Thành công → tăng `_waves_done`, xoay `_wave_index` sang slot kế.
+                Đủ số đợt (`MAX_WAVES_PER_EVENT`) HOẶC hết quân để thả →
+                `_end_event()`. Còn → nạp `_wave_timer = WAVE_COOLDOWN` (chờ đợt sau).
+
+        Chỉ số: balance.TOWER_WAVE_COOLDOWN / _EVENT_COOLDOWN / _MAX_WAVES_PER_EVENT / _AGGRO_RADIUS.
+        """
         # Hút lính idle đã về tháp vào entity-reserve (biến vào trong)
         self._absorb_idle_squads()
 
@@ -592,6 +759,14 @@ class Tower(Entity, IAttackable, IUpgradable):
         return (self.x, self.y)
 
     def _end_event(self) -> None:
+        """Kết thúc sự kiện tấn công (hết đợt / hết quân / titan rời tầm) → nghỉ COOLDOWN.
+
+        Chuyển `_squad_state = "cooldown"`, nạp `_event_cd = EVENT_COOLDOWN`, reset
+        `_waves_done = 0`. Lính đã thả KHÔNG bị gọi về ngay — chúng tự đánh/tự rút
+        theo máy trạng thái RIÊNG của `Soldier` (COMBAT→RETREAT→IDLE).
+
+        Chỉ số: balance.TOWER_EVENT_COOLDOWN.
+        """
         self._squad_state = "cooldown"
         self._event_cd    = self.EVENT_COOLDOWN
         self._waves_done  = 0
@@ -750,15 +925,20 @@ class BasicTower(Tower):
         - Mục tiêu chính + titan trong vùng đều nhận cùng _damage
     """
 
-    MAX_LEVEL         = 2
+    MAX_LEVEL         = balance.BASIC_TOWER_MAX_LEVEL
     ORB_FIELD         = 'ore'
-    DMG_PER_ORB       = 5
-    LV2_DMG_THRESHOLD = 60
-    EXPLOSION_RADIUS  = 80    # px
+    DMG_PER_ORB       = balance.BASIC_TOWER_DMG_PER_ORB
+    LV2_DMG_THRESHOLD = balance.BASIC_TOWER_LV2_DMG_THRESHOLD
+    EXPLOSION_RADIUS  = balance.BASIC_TOWER_EXPLOSION_RADIUS    # px
 
     def __init__(self, x: float, y: float):
+        """Khởi tạo tháp cơ bản — nạp SẴN 2 badge (lv1/lv2) để đổi ngay khi lên cấp.
+
+        `_upgrade_ready` — cờ "đã đủ damage, chỉ còn thiếu fire_ore để CHỐT cấp
+        2" (xem `apply_orb`).
+        """
         super().__init__(x, y, config={
-            'hp': 300, 'damage': 40, 'range': 180, 'cooldown': 2.0
+            'hp': balance.BASIC_TOWER_HP, 'damage': balance.BASIC_TOWER_DAMAGE, 'range': balance.BASIC_TOWER_RANGE, 'cooldown': balance.BASIC_TOWER_COOLDOWN
         })
         self._upgrade_ready = False
         base_dir = os.path.join(os.path.dirname(__file__), 'effect', 'base')
@@ -770,6 +950,8 @@ class BasicTower(Tower):
             print("BasicTower badge error:", e)
 
     def draw(self, screen):
+        """Vẽ thân tháp + badge TĨNH (lv1/lv2) — override draw() base để dùng
+        badge riêng của BasicTower thay vì `_badge_sprite`/`_badge_anim` chung."""
         img = _get_tower_img()
         rect = img.get_rect(center=(int(self.x), int(self.y)))
         screen.blit(img, rect.topleft)
@@ -779,9 +961,23 @@ class BasicTower(Tower):
             screen.blit(badge, brect.topleft)
 
     def can_apply_orb(self) -> bool:
+        """True nếu chưa đạt MAX_LEVEL (override giống base, không đổi logic)."""
         return self._level < self.MAX_LEVEL
 
     def apply_orb(self, amount: int = 1) -> bool:
+        """Override HOÀN TOÀN base — nâng cấp 2 GIAI ĐOẠN thay vì 1 bước đơn giản.
+
+        Thuật toán:
+          GIAI ĐOẠN 1 (`not _upgrade_ready`): tốn `ore` → `+DMG_PER_ORB` mỗi orb.
+              Damage đạt `LV2_DMG_THRESHOLD` (60) → bật `_upgrade_ready = True`
+              (nhưng CHƯA lên `_level`).
+          GIAI ĐOẠN 2 (`_upgrade_ready`): tốn `fire_ore` (LOẠI KHÁC!) →
+              `_level = 2` NGAY (không cần tích luỹ, chỉ cần đủ tài nguyên).
+              Từ lúc này `shoot()` chuyển sang bắn đạn NỔ (ExplosiveProjectile).
+
+        Không đủ tài nguyên ở giai đoạn nào → False, không trừ gì.
+        Chỉ số: balance.BASIC_TOWER_DMG_PER_ORB / _LV2_DMG_THRESHOLD.
+        """
         if not self.can_apply_orb():
             return False
         from structures.buildings.resource_manager import ResourceManager
@@ -804,6 +1000,11 @@ class BasicTower(Tower):
         return True
 
     def shoot(self, target: IAttackable):
+        """Bắn đạn — Lv1 đạn thường (BasicProjectile), Lv2 đạn NỔ (ExplosiveProjectile).
+
+        Chỉ số: balance.BASIC_TOWER_EXPLOSION_RADIUS.
+        """
+        SoundManager.get_instance().play('normal_tower', self.x, self.y)
         if self._level >= 2:
             return ExplosiveProjectile(
                 x=self.x, y=self.y,
@@ -828,19 +1029,21 @@ class ElectricTower(Tower):
         - Sau khi đạn trúng → spawn ElectricField 5s tại vị trí mục tiêu
     """
 
-    MAX_LEVEL            = 2
+    MAX_LEVEL            = balance.ELECTRIC_TOWER_MAX_LEVEL
     ORB_FIELD            = 'electric_ore'
-    DMG_PER_ORB          = 6
-    CHAIN_DMG_PER_ORB    = 3
-    CHAIN_RADIUS_PER_ORB = 7
-    LV2_DMG_THRESHOLD    = 120
+    DMG_PER_ORB          = balance.ELECTRIC_TOWER_DMG_PER_ORB
+    CHAIN_DMG_PER_ORB    = balance.ELECTRIC_TOWER_CHAIN_DMG_PER_ORB
+    CHAIN_RADIUS_PER_ORB = balance.ELECTRIC_TOWER_CHAIN_RADIUS_PER_ORB
+    LV2_DMG_THRESHOLD    = balance.ELECTRIC_TOWER_LV2_DMG_THRESHOLD
 
     def __init__(self, x: float, y: float):
+        """Khởi tạo tháp điện — nạp SẴN 2 animation badge (lv1: 5 frame, lv2: 16
+        frame vòng lặp từ frame 8) qua `visual_effects.load_animation_strip`."""
         super().__init__(x, y, config={
-            'hp': 280, 'damage': 45, 'range': 200, 'cooldown': 1.8
+            'hp': balance.ELECTRIC_TOWER_HP, 'damage': balance.ELECTRIC_TOWER_DAMAGE, 'range': balance.ELECTRIC_TOWER_RANGE, 'cooldown': balance.ELECTRIC_TOWER_COOLDOWN
         })
-        self._chain_damage = 20
-        self._chain_range  = 50
+        self._chain_damage = balance.ELECTRIC_TOWER_CHAIN_DAMAGE
+        self._chain_range  = balance.ELECTRIC_TOWER_CHAIN_RANGE
         base_dir = os.path.join(os.path.dirname(__file__), 'effect', 'elec')
         self._badge_lv1_anim = self._badge_lv2_anim = None
         try:
@@ -852,20 +1055,27 @@ class ElectricTower(Tower):
         self._badge_anim = self._badge_lv1_anim
 
     def update(self, dt: float):
+        """Đổi badge animation theo cấp TRƯỚC khi gọi `super().update()` (cần
+        `_badge_anim` đúng để base tick animation đúng bộ frame)."""
         # Switch badge animation when level changes
         self._badge_anim = self._badge_lv2_anim if self._level >= 2 else self._badge_lv1_anim
         super().update(dt)
 
     def _on_orb_applied(self, amount: int):
+        """Mỗi orb: +damage, +chain damage, +chain range — CẢ 3 stat cùng tăng
+        (khác BasicTower chỉ tăng damage)."""
         self._damage       += self.DMG_PER_ORB         * amount
         self._chain_damage += self.CHAIN_DMG_PER_ORB   * amount
         self._chain_range  += self.CHAIN_RADIUS_PER_ORB * amount
 
     def _check_levelup(self):
+        """Lên Lv2 khi damage đạt `LV2_DMG_THRESHOLD` (120) — mở khoá spawn điện trường."""
         if self._level == 1 and self._damage >= self.LV2_DMG_THRESHOLD:
             self._level = 2
 
     def shoot(self, target: IAttackable) -> ElectricProjectile:
+        """Bắn đạn điện — mang theo damage CHÍNH + chain (giật sang titan gần).
+        Lv2 (`spawn_field=True`) → đạn trúng còn SPAWN THÊM 1 điện trường 5s."""
         return ElectricProjectile(
             x=self.x, y=self.y,
             target=target,
@@ -891,19 +1101,21 @@ class WaterTower(Tower):
         - Vortex hút titan xung quanh theo hình xoắn ốc
     """
 
-    MAX_LEVEL         = 2
+    MAX_LEVEL         = balance.WATER_TOWER_MAX_LEVEL
     ORB_FIELD         = 'water_ore'
-    DMG_PER_ORB       = 4
-    RADIUS_PER_ORB    = 10
-    LV2_DMG_THRESHOLD = 55
-    PUSH_FORCE        = 60
-    KB_DURATION       = 0.3
+    DMG_PER_ORB       = balance.WATER_TOWER_DMG_PER_ORB
+    RADIUS_PER_ORB    = balance.WATER_TOWER_RADIUS_PER_ORB
+    LV2_DMG_THRESHOLD = balance.WATER_TOWER_LV2_DMG_THRESHOLD
+    PUSH_FORCE        = balance.WATER_TOWER_PUSH_FORCE
+    KB_DURATION       = balance.WATER_TOWER_KB_DURATION
 
     def __init__(self, x: float, y: float):
+        """Khởi tạo tháp nước — nạp sheet WaterBall, CẮT LẤY 6 FRAME CUỐI làm badge
+        tĩnh lặp lại (không dùng full sheet startup+loop, chỉ giữ phần loop mượt)."""
         super().__init__(x, y, config={
-            'hp': 260, 'damage': 35, 'range': 220, 'cooldown': 1.5
+            'hp': balance.WATER_TOWER_HP, 'damage': balance.WATER_TOWER_DAMAGE, 'range': balance.WATER_TOWER_RANGE, 'cooldown': balance.WATER_TOWER_COOLDOWN
         })
-        self._push_radius = 70
+        self._push_radius = balance.WATER_TOWER_PUSH_RADIUS
         base_dir = os.path.join(os.path.dirname(__file__), 'effect', 'water')
         try:
             from structures.towers.visual_effects import load_spritesheet
@@ -919,10 +1131,13 @@ class WaterTower(Tower):
             print("WaterTower badge error:", e)
 
     def _on_orb_applied(self, amount: int):
+        """Mỗi orb: +damage, +bán kính đẩy lùi (`_push_radius`)."""
         self._damage      += self.DMG_PER_ORB    * amount
         self._push_radius += self.RADIUS_PER_ORB * amount
 
     def shoot(self, target: IAttackable) -> WaterProjectile:
+        """Bắn đạn nước — Lv1 knockback mục tiêu chính + titan trong `_push_radius`;
+        Lv2 (`vortex_mode=True`) thêm spawn xoáy nước hút titan xung quanh."""
         return WaterProjectile(
             x=self.x, y=self.y,
             target=target,
@@ -954,21 +1169,22 @@ class IceTower(Tower):
         - Không nhận orb thêm
     """
 
-    MAX_LEVEL              = 3
+    MAX_LEVEL              = balance.ICE_TOWER_MAX_LEVEL
     ORB_FIELD              = 'ice_ore'
-    DURATION_PER_ORB       = 0.5
-    LV2_DURATION_THRESHOLD = 4.0
-    SLOW_FACTOR_PER_ORB    = 0.05
-    SPLASH_RADIUS_PER_ORB  = 8
-    LV3_FACTOR_THRESHOLD   = 0.75
+    DURATION_PER_ORB       = balance.ICE_TOWER_DURATION_PER_ORB
+    LV2_DURATION_THRESHOLD = balance.ICE_TOWER_LV2_DURATION_THRESHOLD
+    SLOW_FACTOR_PER_ORB    = balance.ICE_TOWER_SLOW_FACTOR_PER_ORB
+    SPLASH_RADIUS_PER_ORB  = balance.ICE_TOWER_SPLASH_RADIUS_PER_ORB
+    LV3_FACTOR_THRESHOLD   = balance.ICE_TOWER_LV3_FACTOR_THRESHOLD
 
     def __init__(self, x: float, y: float):
+        """Khởi tạo tháp băng — 3 CẤP, mỗi cấp nâng theo chỉ số KHÁC nhau (xem `_on_orb_applied`)."""
         super().__init__(x, y, config={
-            'hp': 240, 'damage': 25, 'range': 160, 'cooldown': 1.5
+            'hp': balance.ICE_TOWER_HP, 'damage': balance.ICE_TOWER_DAMAGE, 'range': balance.ICE_TOWER_RANGE, 'cooldown': balance.ICE_TOWER_COOLDOWN
         })
-        self._slow_duration = 2.0
-        self._slow_factor   = 0.4
-        self._splash_radius = 80
+        self._slow_duration = balance.ICE_TOWER_SLOW_DURATION
+        self._slow_factor   = balance.ICE_TOWER_SLOW_FACTOR
+        self._splash_radius = balance.ICE_TOWER_SPLASH_RADIUS
         base_dir = os.path.join(os.path.dirname(__file__), 'effect', 'ice')
         try:
             from structures.towers.visual_effects import load_animation_strip
@@ -979,9 +1195,16 @@ class IceTower(Tower):
             print("IceTower badge error:", e)
 
     def can_apply_orb(self) -> bool:
+        """True nếu chưa max cấp (3) — giống base, override chỉ để rõ ràng."""
         return self._level < self.MAX_LEVEL
 
     def _on_orb_applied(self, amount: int):
+        """Mỗi orb tăng CHỈ SỐ KHÁC NHAU TUỲ CẤP HIỆN TẠI (khác mọi tháp khác —
+        đây là tháp DUY NHẤT có 3 cấp với 3 công thức orb riêng biệt):
+            Cấp 1 → tăng `_slow_duration` (thời gian làm chậm).
+            Cấp 2 → tăng `_slow_factor` (mức độ chậm) VÀ `_splash_radius` (AoE).
+            Cấp 3 (max) → không nhận orb nữa (`can_apply_orb` đã chặn).
+        """
         if self._level == 1:
             self._slow_duration += self.DURATION_PER_ORB * amount
         elif self._level == 2:
@@ -989,13 +1212,23 @@ class IceTower(Tower):
             self._splash_radius += self.SPLASH_RADIUS_PER_ORB * amount
 
     def _check_levelup(self):
+        """2 ngưỡng lên cấp KHÁC NHAU tuỳ cấp hiện tại:
+            Cấp 1→2: `_slow_duration >= LV2_DURATION_THRESHOLD` (4.0s).
+            Cấp 2→3: `_slow_factor >= LV3_FACTOR_THRESHOLD` (0.75) — lên cấp 3
+                THÌ TỰ ĐỘNG BOOST `_slow_factor` lên `ICE_TOWER_LV3_SLOW_FACTOR`
+                (0.97 — gần đóng băng hoàn toàn, titan chỉ còn 3% tốc độ),
+                KHÔNG phải giá trị người chơi tích luỹ dừng ở đó.
+        """
         if self._level == 1 and self._slow_duration >= self.LV2_DURATION_THRESHOLD:
             self._level = 2
         elif self._level == 2 and self._slow_factor >= self.LV3_FACTOR_THRESHOLD:
             self._level = 3
-            self._slow_factor = 0.97
+            self._slow_factor = balance.ICE_TOWER_LV3_SLOW_FACTOR
 
     def shoot(self, target: IAttackable) -> IceProjectile:
+        """Bắn đạn băng — quy đổi `_slow_factor` (tháp: "phần bị xoá" của tốc độ)
+        sang `1 - _slow_factor` (titan: "phần TỐC ĐỘ CÒN LẠI"), 2 quy ước ngược
+        nhau nên PHẢI ĐỔI DẤU ở đây. Splash chỉ có ở cấp >= 2 (cấp 1 → radius=0)."""
         return IceProjectile(
             x=self.x, y=self.y,
             target=target,

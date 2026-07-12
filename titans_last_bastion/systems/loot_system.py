@@ -3,18 +3,12 @@ import random
 import os
 from core.entity import Entity
 from core.game_state import ResourceBundle
+from config import balance
 
 # --- CẤU HÌNH TỶ LỆ RỚT ĐỒ (LOOT TABLE) ---
 # Format: { 'Tên_Class_Titan': [('tên_biến_vật_phẩm', xác_suất_rớt), ...] }
 # Bạn có thể chỉnh sửa tự do bảng này. Hệ thống sẽ tự động bắt lấy thông số.
-LOOT_TABLE = {
-    'Titan': [('ore', 0.5), ('wood', 0.4), ('stone', 0.4)],  # Mặc định cho class Titan gốc
-    'RegularTitan': [('ore', 0.6), ('gas', 0.2)],
-    'ArmoredTitan': [('anti_armor_ore', 0.5), ('stone', 0.8), ('serum', 0.1)],
-    'ColossalTitan': [('fire_ore', 0.8), ('serum', 0.5), ('titan_pheromone', 0.2)],
-    'BeastTitan': [('titan_pheromone', 1.0), ('acid_ore', 0.5), ('wood', 0.8)],
-    'FoundingTitan': [('serum', 1.0), ('titan_pheromone', 1.0), ('electric_ore', 0.8)]
-}
+LOOT_TABLE = balance.LOOT_TABLE
 
 class DroppedLoot(Entity):
     """Thực thể rơi trên mặt đất khi Titan chết. Click chuột để nhặt."""
@@ -22,6 +16,11 @@ class DroppedLoot(Entity):
     _images_cache = {}
 
     def __init__(self, x: float, y: float, item_type: str, amount: int = 1):
+        """Tạo vật phẩm rơi tại (x,y). Nạp ảnh `core/resource/<item_type>.png`
+        LAZY, cache CHUNG CẤP CLASS theo `item_type` (mọi DroppedLoot cùng
+        loại vật phẩm dùng chung 1 Surface đã nạp). File thiếu hoặc load lỗi
+        (`pygame.error`) → cache `None`, `draw()` sẽ vẽ placeholder hình tròn
+        vàng thay vì crash."""
         super().__init__(x, y)
         self.item_type = item_type
         self.amount = amount
@@ -40,9 +39,16 @@ class DroppedLoot(Entity):
             except pygame.error:
                 self._images_cache[item_type] = None
     def update(self, dt: float) -> None:
+        """No-op — vật phẩm nằm yên trên đất, không có logic per-frame (nhặt
+        được xử lý ở nơi khác qua click chuột kiểm tra `radius`)."""
         pass
 
     def draw(self, screen):
+        """Vẽ sprite vật phẩm + vòng glow nhấp nháy (bán kính dao động theo
+        `sin(time.time()*5)` — hiệu ứng thời gian THỰC, không dùng dt tích
+        luỹ, nên ĐỒNG BỘ nhấp nháy giữa MỌI DroppedLoot trên map dù chúng
+        được tạo ở thời điểm khác nhau). Không có sprite → placeholder 2
+        vòng tròn (nền vàng + viền trắng)."""
         img = self._images_cache.get(self.item_type)
         if img:
             rect = img.get_rect(center=(int(self.x), int(self.y)))

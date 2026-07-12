@@ -106,7 +106,8 @@ def run_boss_intro(screen, clock, bg_snapshot, boss_key: str,
 
 def draw_vuot_ai_hud(screen, level: int, max_level: int, wave: int, total: int,
                      titan_alive: int, is_boss_wave: bool) -> None:
-    """Banner tiến độ Vượt Ải ở góc trên-trái (không nút, chỉ hiển thị).
+    """Banner tiến độ Vượt Ải, canh giữa theo chiều ngang phía trên màn hình
+    (không nút, chỉ hiển thị) — trước đây ở góc trên-trái, đè lên HUD tướng.
 
     Vượt Ải KHÔNG có nút 'Wave tiếp theo' / 'Kết thúc trận': wave tự ra sau
     thời gian nghỉ; chỉ kết thúc khi THẮNG (dọn hết wave) hoặc THUA (HQ vỡ).
@@ -114,7 +115,9 @@ def draw_vuot_ai_hud(screen, level: int, max_level: int, wave: int, total: int,
     title_font = pygame.font.SysFont('consolas', 16, bold=True)
     info_font  = pygame.font.SysFont('consolas', 13)
 
-    px, py, pw, ph = 16, 56, 232, 76
+    W, _H = screen.get_size()
+    pw, ph = 232, 76
+    px, py = (W - pw) // 2, 12
     panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
     panel.fill((18, 12, 22, 195))
     screen.blit(panel, (px, py))

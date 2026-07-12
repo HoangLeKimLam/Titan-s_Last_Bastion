@@ -21,7 +21,7 @@ class InsufficientResourceError(Exception):
     (xây tháp, upgrade, train lính, sửa tường…).
 
     Attributes:
-        resource (str): Tên loại tài nguyên thiếu, vd. 'stone', 'gas'.
+        resource (str): Tên loại tài nguyên thiếu, vd. 'stone', 'anti_stun'.
         required (int): Lượng cần có.
         available (int): Lượng hiện có trong kho.
         message (str): Mô tả lỗi tự động tạo từ 3 field trên.

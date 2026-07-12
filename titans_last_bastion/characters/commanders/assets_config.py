@@ -9,11 +9,11 @@
 #   hurt / dying / win
 from __future__ import annotations
 
-# --- Eren (Knight_player_1.4 pack, 100×64 frames per strip) ---------------
-FRAME_WIDTH_EREN: int = 100
-FRAME_HEIGHT_EREN: int = 64
+# --- Mikasa (Knight_player_1.4 pack, 100×64 frames per strip) ---------------
+FRAME_WIDTH_MIKASA: int = 100
+FRAME_HEIGHT_MIKASA: int = 64
 
-EREN_SPRITE_FRAMES: dict = {
+MIKASA_SPRITE_FRAMES: dict = {
     "idle":    {"file": "Idle_KG_1.png",     "fps": 6,  "loop": True},
     "walk":    {"file": "Walking_KG_1.png",  "fps": 12, "loop": True},
     "attack1": {"file": "Attack_KG_1.png",   "fps": 14, "loop": False},
@@ -27,31 +27,11 @@ EREN_SPRITE_FRAMES: dict = {
     "win":     {"file": "knight_win.png",    "fps": 6,  "loop": False},
 }
 
-# --- Armin (Warrior pack, horizontal strip sheets, 192×192 frames) ---------
-# Same sprite sheets as WarriorSoldier. States without a dedicated sheet
-# reuse the closest available animation as a placeholder.
-FRAME_WIDTH_ARMIN: int = 192
-FRAME_HEIGHT_ARMIN: int = 192
+# --- Eren (Knight 2D Pixel Art, with_outline variant, 96×84 frames) ------
+FRAME_WIDTH_EREN: int = 96
+FRAME_HEIGHT_EREN: int = 84
 
-ARMIN_SPRITE_FRAMES: dict = {
-    "idle":    {"file": "Warrior_Idle.png",    "fps": 8,  "loop": True},
-    "walk":    {"file": "Warrior_Run.png",     "fps": 12, "loop": True},
-    "attack1": {"file": "Warrior_Attack1.png", "fps": 16, "loop": False},
-    "attack2": {"file": "Warrior_Attack2.png", "fps": 16, "loop": False},
-    "attack3": {"file": "Warrior_Attack1.png", "fps": 16, "loop": False},
-    "skill_q": {"file": "Warrior_Attack2.png", "fps": 18, "loop": False},
-    "skill_e": {"file": "Warrior_Run.png",     "fps": 16, "loop": False},
-    "skill_r": {"file": "Warrior_Attack1.png", "fps": 14, "loop": False},
-    "hurt":    {"file": "Warrior_Idle.png",    "fps": 10, "loop": False},
-    "dying":   {"file": "Warrior_Idle.png",    "fps": 6,  "loop": False},
-    "win":     {"file": "Warrior_Guard.png",   "fps": 6,  "loop": True},
-}
-
-# --- Mikasa (Knight 2D Pixel Art, with_outline variant, 96×84 frames) ------
-FRAME_WIDTH_MIKASA: int = 96
-FRAME_HEIGHT_MIKASA: int = 84
-
-MIKASA_SPRITE_FRAMES: dict = {
+EREN_SPRITE_FRAMES: dict = {
     "idle":    {"file": "IDLE.png",     "fps": 8,  "loop": True},
     "walk":    {"file": "WALK.png",     "fps": 12, "loop": True},
     "attack1": {"file": "ATTACK 1.png", "fps": 14, "loop": False},

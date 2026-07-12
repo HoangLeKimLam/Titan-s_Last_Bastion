@@ -9,6 +9,8 @@ Hàm KHÔNG đụng tới logic game — chỉ pygame thuần.
 """
 import pygame
 
+from ui.nine_slice import draw_button, draw_nine_slice, draw_ribbon_title
+
 
 def run_combat_result(screen, clock, won: bool, lines=None) -> None:
     """Vòng lặp blocking hiển thị kết quả trận.
@@ -18,12 +20,20 @@ def run_combat_result(screen, clock, won: bool, lines=None) -> None:
         lines : list[str] các dòng thông tin phụ (phạt, lên màn...).
     """
     W, H = screen.get_size()
-    title_font = pygame.font.SysFont('consolas', 56, bold=True)
-    info_font  = pygame.font.SysFont('consolas', 22)
-    btn_font   = pygame.font.SysFont('consolas', 26, bold=True)
+    title_font = pygame.font.SysFont('consolas', 32, bold=True)
+    info_font  = pygame.font.SysFont('consolas', 20)
+    btn_font   = pygame.font.SysFont('consolas', 22, bold=True)
     lines = lines or []
 
-    btn_rect = pygame.Rect(W // 2 - 150, H // 2 + 130, 300, 56)
+    # Panel giấy cao theo số dòng nội dung; banner tiêu đề đè mép trên panel.
+    panel_w = 640
+    panel_h = max(260, 171 + len(lines) * 32)
+    panel_rect = pygame.Rect(0, 0, panel_w, panel_h)
+    panel_rect.center = (W // 2, H // 2)
+
+    btn_rect = pygame.Rect(0, 0, 280, 54)
+    btn_rect.centerx = panel_rect.centerx
+    btn_rect.bottom = panel_rect.bottom - 26
 
     while True:
         clock.tick(60)
@@ -43,22 +53,17 @@ def run_combat_result(screen, clock, won: bool, lines=None) -> None:
         overlay.fill((6, 8, 14, 240))
         screen.blit(overlay, (0, 0))
 
-        if won:
-            t = title_font.render("CHIEN THANG", True, (235, 215, 130))
-        else:
-            t = title_font.render("THAT BAI", True, (220, 110, 110))
-        screen.blit(t, t.get_rect(center=(W // 2, H // 2 - 120)))
+        draw_nine_slice(screen, panel_rect, style='paper')
+        banner_rect = draw_ribbon_title(screen, panel_rect,
+                                        "VICTORY" if won else "DEFEAT",
+                                        title_font, color='gold' if won else 'red')
 
         for i, ln in enumerate(lines):
-            li = info_font.render(str(ln), True, (180, 195, 215))
-            screen.blit(li, li.get_rect(center=(W // 2, H // 2 - 40 + i * 32)))
+            li = info_font.render(str(ln), True, (55, 45, 35))
+            screen.blit(li, li.get_rect(
+                center=(panel_rect.centerx, banner_rect.bottom + 28 + i * 32)))
 
-        hover = btn_rect.collidepoint(mpos)
-        pygame.draw.rect(screen, (50, 80, 120) if hover else (34, 48, 70),
-                         btn_rect, border_radius=8)
-        pygame.draw.rect(screen, (120, 170, 230) if hover else (70, 100, 150),
-                         btn_rect, 2, border_radius=8)
-        bl = btn_font.render("VE SANH", True, (225, 235, 250))
-        screen.blit(bl, bl.get_rect(center=btn_rect.center))
+        draw_button(screen, btn_rect, "BACK TO LOBBY", style='blue', font=btn_font,
+                   hover=btn_rect.collidepoint(mpos))
 
         pygame.display.flip()

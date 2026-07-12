@@ -24,10 +24,13 @@ class AnimationClip:
 
     @property
     def frame_duration(self) -> float:
+        """Số giây MỖI FRAME phải hiện (nghịch đảo fps). fps<=0 → 1.0s (fallback an toàn)."""
         return 1.0 / self.fps if self.fps > 0 else 1.0
 
 
 def _display_ready() -> bool:
+    """True nếu pygame ĐÃ có display thật (không phải headless) — quyết định có
+    dùng `convert_alpha()` an toàn hay không."""
     return pygame.display.get_init() and pygame.display.get_surface() is not None
 
 
@@ -139,14 +142,41 @@ def load_clips(sprite_folder: str, sprite_frames: dict, *,
                frame_width: int = 100, frame_height: int = 64,
                target_character_height: int = None,
                scale: float = None, headless: bool = False) -> dict:
-    """Load every state in `sprite_frames`; return dict[state, AnimationClip].
+    """Nạp TOÀN BỘ animation của 1 nhân vật (mọi state trong `sprite_frames`),
+    tự tính SCALE để mọi bộ sprite khác nhau kích thước ĐỀU CAO BẰNG NHAU lúc đứng yên.
 
-    If `target_character_height` is set, scale is computed automatically from
-    the IDLE character's bbox so every pack ends up at the same standing height.
-    Each frame is vertically cropped to the pack's envelope.
+    Đây là loader DÙNG CHUNG cho cả Commander (Mikasa/Eren) VÀ Soldier
+    (Warrior/Archer/Lancer) — mỗi bộ sprite gốc có kích thước khung khác nhau
+    (100×64, 96×84, 192×192...), nhưng người chơi cần MỌI nhân vật hiển thị ở
+    TỈ LỆ TƯƠNG ĐỐI hợp lý trên màn hình.
 
-    `headless=True` skips all disk I/O — clips are created with empty frame
-    lists so set_state() never KeyErrors.
+    Thuật toán (5 bước):
+      1. Nạp RAW frame cho mọi state (`_load_raw_frames`) — chưa crop, chưa scale.
+      2. Tính "envelope" (`_envelope_and_idle`): vùng pixel KHÔNG TRONG SUỐT bao
+         trùm MỌI frame của MỌI state (dùng để crop margin trong suốt thừa), và
+         RIÊNG chiều cao NHÂN VẬT LÚC ĐỨNG YÊN (chỉ từ state "idle").
+      3. **Tự tính scale** (nếu `target_character_height` được truyền và chưa có
+         `scale` cứng): `scale = target_height / idle_height` — vd nhân vật idle
+         cao 64px thật trong ảnh, muốn hiển thị 42px trên màn hình → scale ≈0.66.
+         Đây LÀ LÝ DO mọi commander/soldier trông cân đối dù ảnh gốc khác cỡ.
+         Không truyền gì → dùng `SPRITE_SCALE` mặc định từ assets_config.py.
+      4. Với mỗi frame: CROP theo envelope (bỏ margin trong suốt thừa TRÊN/DƯỚI,
+         giữ NGUYÊN chiều rộng — envelope chỉ tính theo trục dọc), rồi SCALE đều.
+      5. `_maybe_convert()` mỗi frame (convert_alpha nếu có display thật).
+
+    `headless=True` HOẶC `sprite_folder` rỗng → BỎ QUA MỌI I/O ĐĨA, trả clip với
+    `frames=[]` cho MỌI state — để `set_state()` không bao giờ KeyError dù chạy
+    test không có display/asset.
+
+    Tham số:
+        sprite_folder: thư mục chứa file ảnh của nhân vật.
+        sprite_frames: dict {state: {'file'/'folder':..., 'fps':..., 'loop':...}}.
+        frame_width/frame_height: kích thước 1 frame TRONG sheet gốc (chế độ strip).
+        target_character_height: chiều cao MONG MUỐN khi hiển thị (px). None → dùng `scale`.
+        scale: hệ số scale CỐ ĐỊNH, ghi đè tự tính. None → tự tính hoặc SPRITE_SCALE.
+        headless: bỏ qua I/O đĩa (test/CI).
+
+    Trả về: dict {state_name: AnimationClip}.
     """
     if headless or not sprite_folder:
         return {
@@ -221,6 +251,10 @@ class CommanderAnimator:
     """State-machine animator owned by a Soldier or Commander (HAS-A composition)."""
 
     def __init__(self, clips: dict, initial_state: str = "idle"):
+        """Gắn animator với bộ `clips` đã nạp (từ `load_clips`), bắt đầu ở `initial_state`.
+
+        Tham số: clips — dict {state: AnimationClip}; initial_state — state đầu.
+        """
         self._clips = clips
         self._state = initial_state
         self._frame_index = 0
@@ -229,22 +263,42 @@ class CommanderAnimator:
 
     @property
     def state(self) -> str:
+        """Tên state animation hiện tại (vd 'idle', 'attack1', 'walk')."""
         return self._state
 
     @property
     def facing_right(self) -> bool:
+        """True nếu nhân vật đang QUAY MẶT sang phải — `current_frame()` tự lật
+        ảnh trái/phải dựa trên cờ này (KHÔNG cần 2 bộ sprite riêng theo hướng)."""
         return self._facing_right
 
     def set_facing(self, facing_right: bool) -> None:
+        """Đặt hướng quay mặt — gọi mỗi khi nhân vật di chuyển ngang có ý nghĩa."""
         self._facing_right = bool(facing_right)
 
     def clip_duration(self, state: str) -> float:
+        """Tổng thời lượng (giây) của 1 clip = số frame / fps.
+
+        State không tồn tại, không có frame, hoặc fps<=0 → trả 0.0 (an toàn,
+        không chia 0). Dùng bởi caller để biết animation "gồng đòn" kéo dài bao lâu
+        (vd `Commander.basic_attack()` đặt `_combo_anim_total` từ giá trị này).
+        """
         clip = self._clips.get(state)
         if clip is None or not clip.frames or clip.fps <= 0:
             return 0.0
         return len(clip.frames) / clip.fps
 
     def set_state(self, state: str) -> None:
+        """Chuyển sang animation state MỚI — reset frame về 0, bỏ qua nếu ĐANG Ở state đó.
+
+        Thuật toán:
+          1. `state == _state` hiện tại → không làm gì (tránh giật animation khi
+             gọi `set_state("walk")` liên tục mỗi frame trong khi đang walk).
+          2. `state` không tồn tại trong `_clips` → log warning, KHÔNG đổi state
+             (an toàn hơn crash — animation cũ tiếp tục chạy).
+          3. Đổi state hợp lệ → reset `_frame_index`/`_timer` về 0 (animation mới
+             LUÔN bắt đầu từ frame đầu).
+        """
         if state == self._state:
             return
         if state not in self._clips:
@@ -255,6 +309,22 @@ class CommanderAnimator:
         self._timer = 0.0
 
     def update(self, dt: float) -> None:
+        """Tiến animation 1 frame theo thời gian thật, tự chuyển state khi hết animation MỘT LẦN.
+
+        Thuật toán:
+          1. Clip hiện tại không tồn tại/không có frame → không làm gì.
+          2. Tích luỹ `_timer += dt`; vòng `while _timer >= frame_duration` (WHILE
+             để bù frame nếu dt lớn do lag, giống `ai.py::_step_col`) → tăng
+             `_frame_index`.
+          3. Hết frame (`_frame_index >= len(frames)`):
+             - `clip.loop == True` → quay về frame 0 (lặp vô tận, vd "idle"/"walk").
+             - `loop == False` (animation MỘT LẦN, vd "attack"/"hurt"): giữ ở
+               FRAME CUỐI, rồi TỰ ĐỘNG chuyển sang `NEXT_STATE_AFTER_ONESHOT`
+               (thường là "idle") — TRỪ KHI đang ở state "dying" (chết thì đứng
+               yên ở frame chết cuối cùng, không tự quay lại "idle").
+
+        Chỉ số fps/loop: khai trong `sprite_frames` (assets_config.py) của mỗi nhân vật.
+        """
         clip = self._clips.get(self._state)
         if clip is None or not clip.frames:
             return
@@ -272,6 +342,15 @@ class CommanderAnimator:
                     return
 
     def current_frame(self) -> Optional["pygame.Surface"]:
+        """Trả Surface của frame HIỆN TẠI, tự LẬT ẢNH nếu đang quay mặt trái.
+
+        `idx` kẹp trần `len(frames)-1` (phòng frame_index vượt do timing hiếm
+        gặp). `facing_right=False` → `pygame.transform.flip(frame, True, False)`
+        MỖI LẦN GỌI (không cache lật sẵn) — đơn giản, chấp nhận chi phí lật lại
+        mỗi frame vẽ.
+
+        Trả về: Surface, hoặc None nếu state không có frame nào (caller tự fallback vẽ hình khác).
+        """
         clip = self._clips.get(self._state)
         if clip is None or not clip.frames:
             return None

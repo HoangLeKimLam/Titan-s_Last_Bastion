@@ -11,6 +11,7 @@ import pygame
 from core.entity import Entity
 from core.interfaces import IAttackable
 from core.event_bus import GameEventBus
+from config import balance
 
 
 class Headquarters(Entity, IAttackable):
@@ -27,7 +28,7 @@ class Headquarters(Entity, IAttackable):
 
     ENTITY_TYPE = 'hq'
 
-    _DEFAULT_HP   = 5000
+    _DEFAULT_HP   = balance.HQ_HP
     _HP_BAR_W     = 200          # px — chiều rộng thanh HP
     _HP_BAR_H     = 12           # px
     _HP_BAR_Y_OFF = 210          # px phía trên anchor (self.y sau khi cam offset)
@@ -41,6 +42,11 @@ class Headquarters(Entity, IAttackable):
 
     def __init__(self, x: float, y: float,
                  max_hp: int = _DEFAULT_HP) -> None:
+        """Khởi tạo HQ tại vị trí trùng tâm castle sprite (tile 85, 69), đầy máu.
+
+        Tham số: max_hp — mặc định `balance.HQ_HP`; caller có thể override (vd
+            load save game với HP HQ đã bị đánh trước đó).
+        """
         super().__init__(x, y)
         self._max_hp = max_hp
         self._hp     = max_hp
@@ -56,6 +62,9 @@ class Headquarters(Entity, IAttackable):
             self.on_death()
 
     def on_death(self) -> None:
+        """HQ bị phá HOÀN TOÀN → GAME OVER. Publish `'game_over'` (reason='hq_destroyed')
+        cho UI/hệ thống subscribe hiển thị màn hình thua. Bọc try/except NGẦM —
+        publish lỗi (event bus chưa sẵn sàng) không được chặn việc đánh dấu chết."""
         self.is_alive = False
         try:
             GameEventBus.get_instance().publish('game_over', {'reason': 'hq_destroyed'})
@@ -66,43 +75,21 @@ class Headquarters(Entity, IAttackable):
 
     @property
     def hp_ratio(self) -> float:
+        """Tỉ lệ HP còn lại (0.0-1.0) — HUD dùng vẽ thanh máu HQ. max_hp=0 → 0.0 (an toàn)."""
         return self._hp / self._max_hp if self._max_hp > 0 else 0.0
 
     # ── Entity interface ─────────────────────────────────────────
 
     def update(self, dt: float) -> None:
+        """No-op — HQ là mục tiêu TĨNH, không di chuyển, không có AI, không tự
+        làm gì mỗi frame. Chỉ phản ứng thụ động qua `take_damage()`."""
         pass  # HQ không di chuyển, không có AI — chỉ nhận damage
 
     def draw(self, screen: pygame.Surface) -> None:
-        """Vẽ HP bar + label "HQ" phía trên castle sprite.
-
-        Khi được gọi từ Pass 2.6, self.x/self.y đã là toạ độ màn hình
-        (world coords đã trừ cam_x/cam_y bởi render loop).
+        """No-op (THÊM MỚI — chỉ đồ họa): thanh HP HQ không còn nổi trên map
+        nữa, đã chuyển thành panel cố định (avatar + bar chuyên nghiệp) ở
+        HUD — xem `ui/hud_panels.py:draw_hq_status()`, gọi 1 lần/frame trong
+        game.py, đọc trực tiếp self._hp/_max_hp. castle sprite vẫn do tile
+        loop vẽ như cũ, không đổi.
         """
-        sx = int(self.x)
-        sy = int(self.y)
-
-        bar_x = sx - self._HP_BAR_W // 2
-        bar_y = sy - self._HP_BAR_Y_OFF
-
-        # Background
-        pygame.draw.rect(screen, self._COL_BG,
-                         (bar_x, bar_y, self._HP_BAR_W, self._HP_BAR_H))
-        # HP fill
-        fill_w = int(self._HP_BAR_W * self.hp_ratio)
-        if fill_w > 0:
-            pygame.draw.rect(screen, self._COL_HP,
-                             (bar_x, bar_y, fill_w, self._HP_BAR_H))
-        # Border
-        pygame.draw.rect(screen, self._COL_BORDER,
-                         (bar_x, bar_y, self._HP_BAR_W, self._HP_BAR_H), 1)
-
-        # Label "HQ  HP/MAX"
-        if Headquarters._font is None:
-            try:
-                Headquarters._font = pygame.font.SysFont('consolas', 11)
-            except Exception:
-                return
-        txt = Headquarters._font.render(
-            f'HQ  {self._hp}/{self._max_hp}', True, self._COL_LABEL)
-        screen.blit(txt, (bar_x, bar_y - txt.get_height() - 2))
+        pass

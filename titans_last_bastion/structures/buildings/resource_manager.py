@@ -1,6 +1,7 @@
 # structures/buildings/resource_manager.py
 from dataclasses import fields as dc_fields
 from core.game_state import ResourceBundle
+from config import balance
 
 
 class ResourceManager:
@@ -13,13 +14,21 @@ class ResourceManager:
     _instance = None
 
     def __init__(self):
+        """Khởi tạo kho RỖNG. KHÔNG gọi trực tiếp — luôn dùng `get_instance()`."""
         self._stock = ResourceBundle()
 
     @classmethod
     def get_instance(cls) -> "ResourceManager":
+        """Trả về instance Singleton duy nhất, tạo mới lần đầu gọi (lazy init)."""
         if cls._instance is None:
             cls._instance = ResourceManager()
         return cls._instance
+
+    @classmethod
+    def reset(cls) -> None:
+        """Xoá singleton (kho vũ khí/bẫy về trống). Gọi khi khởi động lại game
+        (New Game / Continue qua main()) để không mang state phiên cũ sang."""
+        cls._instance = None
 
     def earn(self, bundle: ResourceBundle):
         """Cộng tài nguyên vào kho (loot, harvest, thưởng)."""
@@ -44,4 +53,4 @@ class ResourceManager:
 
     def apply_defeat_penalty(self):
         """Thua màn → mất 20% tài nguyên."""
-        self._stock = self._stock * 0.8
+        self._stock = self._stock * balance.DEFEAT_PENALTY_KEEP_RATIO

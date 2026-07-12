@@ -19,27 +19,18 @@ import os
 import json
 import random
 from typing import Optional
+from config import balance
 
 
 # Giá quy đổi mỗi loại titan (đồng bộ với TT_TITANS trong game.py). Để ở đây
 # nhằm GIỮ wave_manager độc lập hoàn toàn — không phụ thuộc game.py.
-TITAN_COSTS = {
-    'Regular':       15,
-    'Wolf':          20,
-    'Kamikaze':      20,
-    'SoldierHunter': 25,
-    'TowerHunter':   25,
-    'Armored':       45,
-}
+TITAN_COSTS = balance.WAVE_TITAN_COSTS
 
 # Trọng số mặc định nếu JSON thiếu (an toàn fallback).
-_DEFAULT_WEIGHTS = {
-    'Regular': 50, 'Wolf': 25, 'Kamikaze': 15,
-    'SoldierHunter': 7, 'TowerHunter': 3, 'Armored': 0,
-}
+_DEFAULT_WEIGHTS = balance.WAVE_DEFAULT_WEIGHTS
 
-_GROUP_MIN = 2     # số titan tối thiểu mỗi cụm spawn cùng lúc
-_GROUP_MAX = 4     # số titan tối đa mỗi cụm
+_GROUP_MIN = balance.WAVE_GROUP_MIN     # số titan tối thiểu mỗi cụm spawn cùng lúc
+_GROUP_MAX = balance.WAVE_GROUP_MAX     # số titan tối đa mỗi cụm
 
 
 class VuotAiWaveManager:
@@ -55,6 +46,9 @@ class VuotAiWaveManager:
     """
 
     def __init__(self, config_dir: str) -> None:
+        """Tạo manager RỖNG, chưa nạp ải nào — `config_dir` là đường dẫn
+        thư mục chứa `level_N.json` (thường `config/levels/`). Gọi
+        `load_level(n)` trước khi dùng bất kỳ property/method nào khác."""
         self._config_dir = config_dir
         self._cfg: dict = {}
         self._waves: list = []
@@ -86,18 +80,29 @@ class VuotAiWaveManager:
     # ── Truy vấn ──────────────────────────────────────────────────────────
     @property
     def total_waves(self) -> int:
+        """Tổng số wave của ải hiện tại — số wave thường + 1 nếu có boss_wave
+        (boss LUÔN là wave cuối cùng, xem `build_next_wave()`)."""
         return len(self._waves) + (1 if self._boss_wave else 0)
 
     @property
     def has_more_waves(self) -> bool:
+        """True nếu con trỏ `_idx` chưa vượt `total_waves` — game.py dùng
+        làm điều kiện vòng lặp `while mgr.has_more_waves: ...`."""
         return self._idx < self.total_waves
 
     @property
     def completion_reward(self) -> dict:
+        """Thưởng khi HOÀN THÀNH TOÀN BỘ ải (khác `reward` per-wave trả về
+        trong `build_next_wave()` — đây là thưởng CUỐI CÙNG sau wave boss).
+        Copy dict (không trả tham chiếu trực tiếp vào `_cfg`) để caller sửa
+        không ảnh hưởng config gốc."""
         return dict(self._cfg.get('completion_reward', {}))
 
     @property
     def difficulty(self) -> float:
+        """Hệ số độ khó của ải (từ JSON, mặc định 1.0) — game.py dùng nhân
+        thêm vào HP/damage titan nếu muốn (KHÔNG tự áp dụng ở đây, wave_manager
+        chỉ trả kế hoạch SPAWN, không đụng chỉ số titan)."""
         return float(self._cfg.get('difficulty', 1.0))
 
     # ── Cấp phát wave kế tiếp ─────────────────────────────────────────────

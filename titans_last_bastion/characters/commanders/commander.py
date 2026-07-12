@@ -4,7 +4,7 @@
 #   1. No Character intermediate class — Commander inherits Entity directly.
 #   2. Stage defeat (HP <= 0) drops commander level by 1 (floor 1), revives at full HP.
 #
-# Subclasses (Eren, Mikasa, Armin) must override:
+# Subclasses (Mikasa, Eren) must override:
 #   NAME, STAGE, SPRITE_FOLDER     — identity / asset location
 #   SPRITE_FRAMES, FRAME_WIDTH, FRAME_HEIGHT
 #   SKILL_COOLDOWNS                — {'Q': float, 'E': float, 'R': float}
@@ -28,6 +28,7 @@ from core.entity import Entity
 from core.event_bus import GameEventBus
 from core.game_state import ResourceBundle
 from core.interfaces import IAttackable, IMovable, ISkillUser, IUpgradable
+from config import balance
 from characters.soldiers.animation import CommanderAnimator, load_clips
 
 logger = logging.getLogger(__name__)
@@ -52,64 +53,95 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
     TARGET_HEIGHT_PX: int = 48
     ENTITY_TYPE: str = "commander"
 
-    SKILL_COOLDOWNS: dict = {"Q": 5.0, "E": 8.0, "R": 30.0}
+    SKILL_COOLDOWNS: dict = balance.COMMANDER_SKILL_COOLDOWNS
+
+    # Cấp yêu cầu để dùng mỗi skill — mặc định RỖNG = không giới hạn cấp
+    # (giữ nguyên hành vi cũ cho tướng nào không override).
+    # Subclass override, ví dụ: {"Q": 5, "R": 10}. Khoá kiểm tra trong use_skill().
+    SKILL_UNLOCK_LEVEL: dict = {}
 
     # --- Skill tuning (subclasses may override per character) --------------
-    Q_RADIUS: int = 80
-    Q_HIT_COUNT: int = 3
-    Q_DAMAGE_PER_HIT: int = 40
-    Q_DASH_GAP: int = 60
+    Q_RADIUS: int = balance.COMMANDER_Q_RADIUS
+    Q_HIT_COUNT: int = balance.COMMANDER_Q_HIT_COUNT
+    Q_DAMAGE_PER_HIT: int = balance.COMMANDER_Q_DAMAGE_PER_HIT
+    Q_DASH_GAP: int = balance.COMMANDER_Q_DASH_GAP
 
     # E (Grappling Swing) state machine: idle → aiming → flying → (aiming|idle).
     # Aim is VALID only when the landing spot (arrow tip) is on a tower or titan.
-    E_RANGE_PX: int = 250
-    E_MIN_RANGE_PX: int = 60
-    E_MAX_RANGE_PX: int = 480
-    E_BASE_CHARGES: int = 6
-    E_MAX_CHARGES: int = 11        # base + up to 5 bonus charges
-    E_BONUS_LIFETIME: float = 6.0  # bonus pool expiry (seconds)
-    E_FLIGHT_DURATION: float = 0.35
-    E_AIM_TIMEOUT: float = 3.0
-    E_DOWNSWING_SLOWDOWN: float = 1.3   # downward swings are 30% slower
-    E_TARGET_PAD_PX: float = 24.0       # snap tolerance around a target body
+    E_RANGE_PX: int = balance.COMMANDER_E_RANGE_PX
+    E_MIN_RANGE_PX: int = balance.COMMANDER_E_MIN_RANGE_PX
+    E_MAX_RANGE_PX: int = balance.COMMANDER_E_MAX_RANGE_PX
+    E_BASE_CHARGES: int = balance.COMMANDER_E_BASE_CHARGES
+    E_MAX_CHARGES: int = balance.COMMANDER_E_MAX_CHARGES        # base + up to 5 bonus charges
+    E_BONUS_LIFETIME: float = balance.COMMANDER_E_BONUS_LIFETIME  # bonus pool expiry (seconds)
+    E_FLIGHT_DURATION: float = balance.COMMANDER_E_FLIGHT_DURATION
+    E_AIM_TIMEOUT: float = balance.COMMANDER_E_AIM_TIMEOUT
+    E_DOWNSWING_SLOWDOWN: float = balance.COMMANDER_E_DOWNSWING_SLOWDOWN   # downward swings are 30% slower
+    E_TARGET_PAD_PX: float = balance.COMMANDER_E_TARGET_PAD_PX       # snap tolerance around a target body
 
     # --- Titan-damage stack -----------------------------------------------
     # Consecutive LMB hits on titans build a stack. The Nth hit deals
     # base × TITAN_DMG_STACK_MULTS[min(N-1,3)]:  125%/150%/200%/250%.
     # No hit for TITAN_STACK_RESET_WINDOW seconds resets to 0.
-    TITAN_DMG_STACK_MULTS: tuple = (1.25, 1.50, 2.00, 2.50)
-    TITAN_STACK_RESET_WINDOW: float = 1.5
+    TITAN_DMG_STACK_MULTS: tuple = balance.COMMANDER_TITAN_DMG_STACK_MULTS
+    TITAN_STACK_RESET_WINDOW: float = balance.COMMANDER_TITAN_STACK_RESET_WINDOW
 
-    R_DURATION: float = 10.0
-    R_RADIUS: int = 150
-    R_DAMAGE: int = 150
+    R_DURATION: float = balance.COMMANDER_R_DURATION
+    R_RADIUS: int = balance.COMMANDER_R_RADIUS
+    R_DAMAGE: int = balance.COMMANDER_R_DAMAGE
 
     # --- Basic-attack combo (LMB: attack1 → attack2 → attack3 → wrap) ----
-    BASIC_ATTACK_RADIUS: int = 90
-    BASIC_ATTACK_CONE_HALF_ANGLE_DEG: float = 28.0   # 56° total opening
-    BASIC_ATTACK_MIN_LATERAL_PX: float = 40.0        # point-blank forgiveness
-    BASIC_ATTACK_DAMAGES: tuple = (25, 35, 60)
-    COMBO_RESET_WINDOW: float = 1.5
-    COMBO_CANCEL_THRESHOLD: float = 0.5   # cancel allowed in second half of swing
+    BASIC_ATTACK_RADIUS: int = balance.COMMANDER_BASIC_ATTACK_RADIUS
+    BASIC_ATTACK_CONE_HALF_ANGLE_DEG: float = balance.COMMANDER_BASIC_ATTACK_CONE_HALF_ANGLE_DEG   # 56° total opening
+    BASIC_ATTACK_MIN_LATERAL_PX: float = balance.COMMANDER_BASIC_ATTACK_MIN_LATERAL_PX        # point-blank forgiveness
+    BASIC_ATTACK_DAMAGES: tuple = balance.COMMANDER_BASIC_ATTACK_DAMAGES
+    COMBO_RESET_WINDOW: float = balance.COMMANDER_COMBO_RESET_WINDOW
+    COMBO_CANCEL_THRESHOLD: float = balance.COMMANDER_COMBO_CANCEL_THRESHOLD   # cancel allowed in second half of swing
 
     # --- Stat scaling -----------------------------------------------------
-    BASE_HP: int = 200
-    HP_PER_LEVEL: int = 40
-    BASE_SPEED: float = 150.0
-    MAX_LEVEL: int = 10
+    BASE_HP: int = balance.COMMANDER_BASE_HP
+    HP_PER_LEVEL: int = balance.COMMANDER_HP_PER_LEVEL
+    BASE_SPEED: float = balance.COMMANDER_BASE_SPEED
+    MAX_LEVEL: int = balance.COMMANDER_MAX_LEVEL
 
-    UPGRADE_COSTS: dict = {
-        1: ResourceBundle(stone=30, wood=20),
-        2: ResourceBundle(stone=50, wood=30, ore=5),
-        3: ResourceBundle(stone=80, wood=40, ore=10),
-        4: ResourceBundle(stone=120, wood=60, ore=20, fire_ore=2),
-        5: ResourceBundle(stone=180, wood=90, ore=30, fire_ore=5),
-    }
+    # Đòn đánh thường (LMB combo): dame + tốc đánh tăng theo cấp.
+    # level 1 = hệ số x1.0 (không đổi so với trước). Chỉnh 2 số này để cân
+    # bằng — KHÔNG sửa công thức trong basic_attack().
+    DAMAGE_PCT_PER_LEVEL: float = balance.COMMANDER_DAMAGE_PCT_PER_LEVEL        # +8% dame mỗi cấp (lv10 = +72%)
+    ATTACK_SPEED_PCT_PER_LEVEL: float = balance.COMMANDER_ATTACK_SPEED_PCT_PER_LEVEL  # +5% tốc đánh mỗi cấp (lv10 = +45%,
+                                               # giảm thời gian "gồng đòn" cần chờ)
+
+    # Đòn antiheal (Wolf, dtype='antiheal'): chặn heal() trong bấy nhiêu giây.
+    ANTI_HEAL_DURATION: float = balance.COMMANDER_ANTI_HEAL_DURATION
+
+    UPGRADE_COSTS: dict = balance.COMMANDER_UPGRADE_COSTS
 
     # --- Construction -------------------------------------------------------
 
     def __init__(self, x: float, y: float, level: int = 1, xp: int = 0, *,
                  headless: bool = False) -> None:
+        """Khởi tạo tướng ở cấp `level` (HP/XP tính theo cấp) + nạp toàn bộ animation.
+
+        Tham số:
+            level: cấp khởi điểm (>=1, kẹp sàn). HP tối đa tính qua `_compute_max_hp`.
+            xp: XP khởi điểm (>=0, kẹp sàn).
+            headless: True khi chạy test/CI không có màn hình — truyền xuống
+                `load_clips()` để bỏ qua thao tác pygame cần display thật.
+
+        Nhóm state chính:
+            `_skill_cd` — dict cooldown MỖI skill trong `SKILL_COOLDOWNS`, khởi
+                tạo 0.0 (sẵn sàng dùng ngay).
+            `_combo_*` — trạng thái chuỗi 3 đòn LMB (bước hiện tại, thời gian còn
+                "gồng đòn", cửa sổ reset combo).
+            `_titan_stack*` — số đòn LIÊN TIẾP trúng titan (stack damage tăng dần).
+            `_e_*` — máy trạng thái skill E (móc câu): idle→aiming→flying.
+            `_level_penalty_on_defeat` — mặc định BẬT (giữ hành vi Vượt Ải cũ);
+                game.py TẮT cờ này khi ở chế độ Thao Trường (không phạt khi thua).
+
+        Liên kết: `load_clips()` (animation.py) dựng `CommanderAnimator` từ
+        `SPRITE_FOLDER`/`SPRITE_FRAMES` do class con (Mikasa/Eren) khai.
+        Chỉ số: balance.COMMANDER_BASE_HP/_HP_PER_LEVEL/_BASE_SPEED, balance.COMMANDER_E_*.
+        """
         super().__init__(x, y)
         self._level = max(1, int(level))
         self._xp = max(0, int(xp))
@@ -121,6 +153,7 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         self._skill_cd: dict = {sid: 0.0 for sid in self.SKILL_COOLDOWNS}
         self._invincible: bool = False
         self._inv_timer: float = 0.0
+        self._anti_heal_timer: float = 0.0   # >0 = đang bị chặn heal() (Wolf antiheal)
 
         # 3-hit combo state
         self._combo_step: int = 0
@@ -148,6 +181,11 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         self._move_target: Optional[tuple] = None
         self._headless = headless
 
+        # Phạt trừ cấp khi chết (_on_defeat) — mặc định BẬT, giữ đúng hành vi cũ.
+        # game.py TẮT cờ này khi combat_mode là Thao Trường (luyện tập, không
+        # phạt theo thiết kế — xem systems/screen_manager.py).
+        self._level_penalty_on_defeat: bool = True
+
         clips = load_clips(
             self.SPRITE_FOLDER, self.SPRITE_FRAMES,
             frame_width=self.FRAME_WIDTH,
@@ -160,15 +198,37 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
     # --- Stats / properties ------------------------------------------------
 
     def _compute_max_hp(self, level: int) -> int:
+        """HP tối đa ở `level`: `BASE_HP + (level-1) × HP_PER_LEVEL` — tuyến tính theo cấp.
+
+        Chỉ số: balance.COMMANDER_BASE_HP, balance.COMMANDER_HP_PER_LEVEL.
+        """
         return self.BASE_HP + (level - 1) * self.HP_PER_LEVEL
 
     def _compute_max_xp(self, level: int) -> int:
+        """XP cần để lên cấp TIẾP THEO từ `level`: `100 × level` — tăng dần mỗi cấp.
+
+        Số `100` là hằng CỨNG (không nằm trong balance.py).
+        """
         return 100 * level
 
     def gain_xp(self, amount: int) -> None:
+        """Cộng XP, tự động lên nhiều cấp liên tiếp nếu đủ, HỒI ĐẦY MÁU mỗi lần lên cấp.
+
+        Thuật toán:
+          1. Đã max cấp (`MAX_LEVEL` = 10) → không cộng gì nữa (XP thừa mất luôn).
+          2. Cộng XP.
+          3. Vòng `while xp >= max_xp` (không phải `if` — cho phép LÊN NHIỀU CẤP
+             cùng lúc nếu 1 nguồn XP lớn, vd giết Boss): trừ `max_xp` khỏi `xp`
+             dư, tăng `_level`, tính lại `max_xp`/`max_hp` theo cấp mới, **HỒI ĐẦY
+             MÁU** (`_hp = _max_hp`) — lên cấp là 1 lần hồi phục miễn phí.
+          4. Có lên cấp → phát âm thanh `'upgrade_success'` qua GameEventBus.
+
+        Tham số: amount — XP nhận được (thường từ giết titan, xem loot_system.py).
+        Chỉ số: balance.COMMANDER_MAX_LEVEL.
+        """
         if self._level >= self.MAX_LEVEL:
             return
-        
+
         self._xp += amount
         leveled_up = False
         while self._xp >= self._max_xp and self._level < self.MAX_LEVEL:
@@ -184,39 +244,75 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
 
     @property
     def hp(self) -> int:
+        """HP hiện tại — chỉ đọc từ bên ngoài (HUD). Sửa HP qua `take_damage()`/`heal()`."""
         return self._hp
 
     @property
     def max_hp(self) -> int:
+        """HP tối đa ở cấp hiện tại (đã tính theo `_compute_max_hp`)."""
         return self._max_hp
 
     @property
     def level(self) -> int:
+        """Cấp hiện tại (1-10). Chỉ đổi qua `gain_xp()` hoặc phạt thua trận."""
         return self._level
 
     @property
     def xp(self) -> int:
+        """XP tích luỹ trong CẤP HIỆN TẠI (đã trừ phần dùng để lên cấp trước đó)."""
         return self._xp
 
     @property
     def max_xp(self) -> int:
+        """XP cần để lên cấp tiếp theo — HUD dùng vẽ thanh XP."""
         return self._max_xp
 
     @property
     def is_invincible(self) -> bool:
+        """True nếu đang bất tử tạm thời (vd sau khi hồi sinh) — `take_damage()` bỏ qua."""
         return self._invincible
 
     @property
+    def is_anti_healed(self) -> bool:
+        """True nếu đang bị chặn heal() (dính antiheal, đếm ngược trong
+        `_anti_heal_timer`) — UI dùng để hiện icon trái tim gạch chéo."""
+        return self._anti_heal_timer > 0.0
+
+    @property
     def titan_stack(self) -> int:
+        """Số đòn LIÊN TIẾP vừa trúng titan (0-3+) — tra `TITAN_DMG_STACK_MULTS`
+        để biết hệ số nhân damage của đòn tiếp theo."""
         return self._titan_stack
 
     @property
     def combo_step(self) -> int:
+        """Bước hiện tại trong chuỗi combo LMB 3 đòn (0/1/2) — quyết định damage
+        + animation của đòn TIẾP THEO khi click."""
         return self._combo_step
 
     # --- Entity contract ---------------------------------------------------
 
     def update(self, dt: float) -> None:
+        """Vòng update mỗi frame: đếm ngược MỌI timer + di chuyển + animation.
+
+        Thuật toán, theo thứ tự:
+          1. Đang bị đẩy lùi bởi đá Beast (`pushback_vx/vy != 0`) →
+             `RockProjectile.apply_pushback_tween()` (attackstrategy.py) trượt
+             tướng theo vector đẩy, giảm dần theo hàm mũ.
+          2. Đếm ngược MỌI cooldown skill trong `_skill_cd`.
+          3. Đếm ngược `_anti_heal_timer` (debuff Wolf).
+          4. Đếm ngược `_inv_timer` (bất tử tạm thời), hết → tắt `_invincible`.
+          5. Đếm ngược `_combo_anim_left` ("gồng đòn" — khoá click liên tiếp) và
+             `_combo_reset_left` (cửa sổ giữ combo); hết cửa sổ reset → combo về 0.
+          6. Đếm ngược `_titan_stack_timer`; hết → stack damage về 0.
+          7. Máy trạng thái E: "aiming" → đếm ngược `_e_aim_timer`, hết thời gian
+             ngắm → `cancel_swing()`. "flying" → `_step_flight(dt)` (đang bay dây).
+          8. Có `_move_target` VÀ không đang bay E → `_step_toward()` (đi bộ).
+          9. `_animator.update(dt)` — tiến animation.
+
+        Chỉ số: balance.COMMANDER_ANTI_HEAL_DURATION, balance.COMMANDER_E_AIM_TIMEOUT,
+        balance.COMMANDER_TITAN_STACK_RESET_WINDOW.
+        """
 
         # Rock AoE pushback tween từ BeastTitan
         if getattr(self, 'pushback_vx', 0.0) != 0.0 or getattr(self, 'pushback_vy', 0.0) != 0.0:
@@ -226,6 +322,9 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         for sid in self._skill_cd:
             if self._skill_cd[sid] > 0:
                 self._skill_cd[sid] = max(0.0, self._skill_cd[sid] - dt)
+
+        if self._anti_heal_timer > 0.0:
+            self._anti_heal_timer = max(0.0, self._anti_heal_timer - dt)
 
         if self._invincible:
             self._inv_timer -= dt
@@ -259,6 +358,26 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         self._animator.update(dt)
 
     def _step_toward(self, destination: tuple, dt: float) -> None:
+        """Đi bộ 1 bước về `destination`, né tường, tự dừng khi tới hoặc bị chặn.
+
+        Thuật toán:
+          1. Còn cách < 1px → coi như đã tới: xoá `_move_target`, chuyển animation
+             về "idle" nếu đang "walk".
+          2. Đổi hướng nhìn theo dx (`set_facing`), chuyển animation sang "walk"
+             nếu đang "idle".
+          3. `step = _speed * dt`. Nếu `step >= dist` (bước này đủ tới đích):
+             kiểm tra `WorldQuery.is_wall_blocked(destination, radius=20,
+             extend_down=48)` — không chặn thì SNAP thẳng tới đích; bị chặn thì
+             HUỶ di chuyển (không đi tiếp, không lết dần).
+          4. Ngược lại (chưa tới): tính vị trí kế tiếp theo vector đơn vị, kiểm
+             tra va chạm tương tự — không chặn thì đi, bị chặn thì huỷ di chuyển.
+
+        `radius=20, extend_down=48`: hộp va chạm KHÔNG ĐỐI XỨNG — mở rộng xuống
+        dưới nhiều hơn (chân tướng), phù hợp góc nhìn top-down của sprite.
+
+        Tham số: destination — (x, y) đích; dt.
+        Liên kết: `WorldQuery.is_wall_blocked()`.
+        """
         dx = destination[0] - self.x
         dy = destination[1] - self.y
         dist = math.hypot(dx, dy)
@@ -290,6 +409,21 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
                 self._move_target = None
 
     def draw(self, screen) -> None:
+        """Vẽ sprite + HP bar + thanh hồi đòn + vòng bất tử + vòng cung tấn công + aim overlay.
+
+        Thuật toán, theo lớp (dưới lên trên):
+          1. Frame hiện tại từ `_animator`, neo `midbottom` tại (x, y) — chân
+             sprite chạm đúng vị trí logic. Không có frame → vẽ vòng tròn xanh
+             thay thế (fallback).
+          2. HP bar (đỏ nền + xanh theo tỉ lệ `_hp/_max_hp`) phía trên đầu.
+          3. `_draw_recovery_bar()` — thanh trắng mảnh cảnh báo đang "gồng đòn".
+          4. Đang bất tử → vòng tròn vàng viền quanh sprite.
+          5. Đang trong combo animation (`_combo_anim_left > 0`) → vẽ vùng đánh
+             (`_draw_attack_cone`).
+          6. Đang ngắm/bay E → vẽ overlay ngắm + hitbox debug.
+
+        CHỈ ĐỒ HOẠ — không đổi trạng thái logic.
+        """
         frame = self._animator.current_frame()
         sprite_h = 36
         if frame is not None:
@@ -308,6 +442,9 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         by = int(self.y) - sprite_h - 12
         pygame.draw.rect(screen, (180, 30, 30), (bx, by, bar_w, 6))
         pygame.draw.rect(screen, (60, 220, 60), (bx, by, int(bar_w * ratio), 6))
+
+        # Thanh hồi đòn (mảnh, trắng) — cảnh báo đang trong lúc "gồng đòn"
+        self._draw_recovery_bar(screen, bx, by - 5, bar_w)
 
         # Invincibility ring
         if self._invincible:
@@ -414,24 +551,49 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
     # --- IAttackable -------------------------------------------------------
 
     def take_damage(self, amount: int, dtype: str) -> None:
+        """Nhận damage — bỏ qua nếu đã chết hoặc đang BẤT TỬ; kích debuff antiheal.
+
+        Thuật toán:
+          1. Đã chết → không làm gì.
+          2. Đang `_invincible` → log rồi bỏ qua HOÀN TOÀN (không trừ HP).
+          3. `dtype == 'antiheal'` (đòn Wolf) → nạp `_anti_heal_timer =
+             ANTI_HEAL_DURATION` (15s), chặn `heal()` trong thời gian đó.
+          4. Trừ HP (kẹp `amount >= 0`).
+          5. HP <= 0 → `_on_defeat()`. Còn sống → chuyển animation "hurt".
+
+        Tham số: amount — damage thô; dtype — loại damage, chỉ 'antiheal' có xử lý riêng.
+        Chỉ số: balance.COMMANDER_ANTI_HEAL_DURATION.
+        """
         if not self.is_alive:
             return
         if self._invincible:
             logger.debug("%s ignored %d %s damage (invincible)",
                          self.NAME, amount, dtype)
             return
+        if dtype == 'antiheal':
+            self._anti_heal_timer = self.ANTI_HEAL_DURATION
         self._hp -= max(0, int(amount))
         if self._hp <= 0:
             self._on_defeat()
         else:
             self._animator.set_state("hurt")
 
+    def heal(self, amount: int) -> None:
+        """Hồi máu — không vượt max_hp, không hồi nếu đã chết (vd. đang chờ
+        hồi sinh tại HQ) hoặc đang bị antiheal (Wolf, xem `is_anti_healed`).
+        Dùng cho các cơ chế hồi máu ngoài combat (vd. đứng trong vùng castle)."""
+        if not self.is_alive or self.is_anti_healed:
+            return
+        self._hp = min(self._max_hp, self._hp + max(0, int(amount)))
+
 
     def _on_defeat(self) -> None:
-        """Defeat: giảm 1 level, ẩn khỏi màn, đặt timer hồi sinh tại HQ."""
+        """Defeat: giảm 1 level (trừ khi Thao Trường — xem `_level_penalty_on_defeat`),
+        ẩn khỏi màn, đặt timer hồi sinh tại HQ."""
         old_level = self._level
-        self._level = max(1, self._level - 1)
-        self._max_hp = self._compute_max_hp(self._level)
+        if self._level_penalty_on_defeat:
+            self._level = max(1, self._level - 1)
+            self._max_hp = self._compute_max_hp(self._level)
         self._invincible = False
         self._inv_timer  = 0.0
         self.is_alive    = False
@@ -446,15 +608,43 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
 
     # --- Basic attack (LMB) -----------------------------------------------
 
+    def _attack_recovery_gate(self) -> float:
+        """Thời gian (giây, tính từ lúc `_combo_anim_left` = `_combo_anim_total`)
+        cần chờ trước khi 1 click mới được TÍNH — dùng chung bởi `basic_attack()`
+        (chặn click hụt) và `_draw_recovery_bar()` (thanh trắng cảnh báo), để
+        không lặp công thức 2 nơi. Tốc đánh tăng theo cấp → gate ngắn lại."""
+        atk_speed_mult = 1.0 + (self._level - 1) * self.ATTACK_SPEED_PCT_PER_LEVEL
+        return (self._combo_anim_total * self.COMBO_CANCEL_THRESHOLD) / atk_speed_mult
+
+    def _draw_recovery_bar(self, screen, bar_x: int, bar_y: int, bar_w: int) -> None:
+        """Thanh mảnh màu trắng cảnh báo đang "gồng đòn" (chưa click lại được).
+        Chạy đầy (0 → 100%) đúng lúc hồi đòn kết thúc rồi biến mất ngay."""
+        if self._combo_anim_total <= 0:
+            return
+        gate = self._attack_recovery_gate()
+        if self._combo_anim_left <= gate:
+            return   # đã qua gate — click tiếp theo được tính ngay, ẩn thanh
+        recovery_total = self._combo_anim_total - gate
+        if recovery_total <= 0:
+            return
+        elapsed = self._combo_anim_total - self._combo_anim_left
+        progress = max(0.0, min(1.0, elapsed / recovery_total))
+        bar_h = 2
+        pygame.draw.rect(screen, (70, 70, 70), (bar_x, bar_y, bar_w, bar_h))
+        pygame.draw.rect(screen, (255, 255, 255),
+                         (bar_x, bar_y, int(bar_w * progress), bar_h))
+
     def basic_attack(self) -> None:
         """3-hit melee combo attack1 → attack2 → attack3 → wrap.
 
         Hitting a titan advances the titan-damage stack (125%/150%/200%/250%).
         Hitting a LargeTitan during an E session grants +1 bonus E charge.
         """
+        # Tốc đánh tăng theo cấp → rút ngắn thời gian "gồng đòn" cần chờ trước
+        # khi 1 click mới được TÍNH (nhị phân: đủ giờ mới có dame, hụt = 0 dame,
+        # không đổi combo — giữ nguyên hành vi cũ, chỉ đổi độ dài cửa sổ chờ).
         if (self._combo_anim_total > 0
-                and self._combo_anim_left > self._combo_anim_total
-                * self.COMBO_CANCEL_THRESHOLD):
+                and self._combo_anim_left > self._attack_recovery_gate()):
             return
 
         if self._combo_reset_left <= 0:
@@ -467,9 +657,13 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         base_damage = self.BASIC_ATTACK_DAMAGES[step]
         stack_idx = min(self._titan_stack, len(self.TITAN_DMG_STACK_MULTS) - 1)
         mult = self.TITAN_DMG_STACK_MULTS[stack_idx]
-        damage = int(round(base_damage * mult))
+        dmg_level_mult = 1.0 + (self._level - 1) * self.DAMAGE_PCT_PER_LEVEL
+        damage = int(round(base_damage * mult * dmg_level_mult))
 
         self._animator.set_state(state)
+        from systems.sound_system import SoundManager
+        if not getattr(self, 'is_in_titan_form', False):
+            SoundManager.get_instance().play('swing_sword', self.x, self.y)
 
         from systems.world_query import WorldQuery
         hit_any = False
@@ -521,6 +715,15 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         return abs(dy) <= max_lateral
 
     def _draw_attack_cone(self, screen) -> None:
+        """Vẽ tam giác biểu diễn vùng đánh (hình quạt xấp xỉ bằng tam giác).
+
+        Hình học: đỉnh tại (x, y-40) — hơi cao hơn chân tướng; 2 cạnh xa mở rộng
+        theo `BASIC_ATTACK_CONE_HALF_ANGLE_DEG`, độ dài `BASIC_ATTACK_RADIUS`,
+        hướng theo `facing_right`. Đây là hình ĐƠN GIẢN HOÁ của vùng va chạm thật
+        (`_in_attack_cone` dùng công thức hình nón chính xác hơn, có `max_lateral`
+        tăng dần theo khoảng cách + cận biên tối thiểu).
+        CHỈ ĐỒ HOẠ.
+        """
         facing = 1.0 if self._animator.facing_right else -1.0
         half = math.radians(self.BASIC_ATTACK_CONE_HALF_ANGLE_DEG)
         r = self.BASIC_ATTACK_RADIUS
@@ -537,19 +740,46 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
     # --- IMovable ----------------------------------------------------------
 
     def move(self, destination: tuple) -> None:
+        """Đặt điểm đến — di chuyển THẬT diễn ra qua nhiều frame trong `update()`
+        (gọi `_step_toward()`), KHÔNG dịch chuyển tức thì."""
         self._move_target = (float(destination[0]), float(destination[1]))
 
     # --- ISkillUser --------------------------------------------------------
 
     def use_skill(self, skill_id: str) -> None:
+        """Kích hoạt skill — kiểm tra hợp lệ → mở khoá → cooldown, rồi mới thực thi.
+
+        Thuật toán:
+          1. `skill_id` không phải Q/E/R → `raise ValueError` (lỗi lập trình, nên
+             raise thay vì âm thầm bỏ qua).
+          2. Chưa đủ cấp mở khoá (`is_skill_unlocked`) → bỏ qua ÊM, KHÔNG tốn
+             cooldown — tránh phí CD nếu người chơi lỡ bấm skill chưa mở.
+          3. Còn cooldown → bỏ qua.
+          4. Gọi `_activate_skill(skill_id)` (class con override, dispatch tới
+             method skill cụ thể), rồi nạp `_skill_cd[skill_id] = SKILL_COOLDOWNS[skill_id]`.
+
+        Tham số: skill_id — 'Q'/'E'/'R'.
+        Chỉ số: balance.<COMMANDER>_SKILL_COOLDOWNS, balance.<COMMANDER>_SKILL_UNLOCK_LEVEL.
+        """
         if skill_id not in self.SKILL_COOLDOWNS:
             raise ValueError(f"Invalid skill id: {skill_id!r} (expected Q/E/R)")
+        if not self.is_skill_unlocked(skill_id):
+            return
         if self._skill_cd[skill_id] > 0:
             return
         self._activate_skill(skill_id)
         self._skill_cd[skill_id] = float(self.SKILL_COOLDOWNS[skill_id])
 
+    def is_skill_unlocked(self, skill_id: str) -> bool:
+        """True nếu cấp hiện tại >= mốc mở khoá của skill (mặc định mốc 1 = luôn mở)."""
+        return self._level >= self.SKILL_UNLOCK_LEVEL.get(skill_id, 1)
+
+    def skill_unlock_level(self, skill_id: str) -> int:
+        """Cấp cần để mở khoá `skill_id` — HUD dùng hiển thị "Lv N" trên icon khoá."""
+        return self.SKILL_UNLOCK_LEVEL.get(skill_id, 1)
+
     def get_cooldown(self, skill_id: str) -> float:
+        """Số giây cooldown còn lại của `skill_id` — HUD dùng vẽ vòng cooldown icon."""
         return max(0.0, float(self._skill_cd.get(skill_id, 0.0)))
 
     @abstractmethod
@@ -557,7 +787,7 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         """Subclass dispatches skill_id → its concrete skill method."""
         ...
 
-    # --- Q / E / R default implementations (Eren-flavoured) ---------------
+    # --- Q / E / R default implementations (Mikasa-flavoured) ---------------
 
     def _slash_combo(self) -> None:
         """Q — dash to nearest titan then 3-hit AoE on landing."""
@@ -724,7 +954,9 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         self._launch_flight()
 
     def _launch_flight(self) -> None:
-        """Consume one charge and start a flight along the current aim. Assumes aim is valid."""
+        """Commit aim and enter FLYING state towards target."""
+        from systems.sound_system import SoundManager
+        SoundManager.get_instance().play('skillE', self.x, self.y)
         self._e_charges -= 1
         dx, dy = self._e_aim_dir
         self._e_flight_start = (self.x, self.y)
@@ -828,6 +1060,15 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         })
 
     def _end_session(self, *, set_cooldown: bool) -> None:
+        """Kết thúc PHIÊN skill E (dù bay xong hay bị huỷ giữa chừng) — reset toàn bộ state.
+
+        Reset: `_e_state` về "idle", xoá charge còn lại, mọi cờ/aim liên quan.
+        `set_cooldown=True` (huỷ chủ động qua `cancel_swing`) → áp cooldown E
+        ngay; `False` (bay xong tự nhiên) → không phạt cooldown thêm — cooldown
+        thật đã được áp lúc `use_skill()` kích hoạt E.
+
+        Tham số: set_cooldown — bắt buộc truyền qua keyword (`*`).
+        """
         self._e_state = "idle"
         self._e_charges = 0
         self._e_bonus_given_this_aim = False
@@ -844,6 +1085,8 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         from systems.world_query import WorldQuery
 
         self._animator.set_state("skill_r")
+        from systems.sound_system import SoundManager
+        SoundManager.get_instance().play('mikasa_skillR', self.x, self.y)
         self._invincible = True
         self._inv_timer = self.R_DURATION
         for titan in WorldQuery.find_in_radius(cx=self.x, cy=self.y,
@@ -854,6 +1097,21 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
     # --- IUpgradable -------------------------------------------------------
 
     def upgrade(self) -> None:
+        """Nâng cấp tướng bằng TÀI NGUYÊN (đường lên cấp THỨ 2, song song với XP).
+
+        ⚠️ GHI CHÚ QUAN TRỌNG (audit trước đó): hàm này KHÔNG được gọi ở đâu
+        trong game hiện tại — đường lên cấp DUY NHẤT đang chạy thật là
+        `gain_xp()` (qua giết titan, xem `loot_system.py`). `upgrade()` là API
+        đã implement đầy đủ nhưng CHƯA được nối vào UI/gameplay nào. Giữ nguyên
+        (không xoá) theo quyết định của nhóm — có thể dùng sau nếu thiết kế đổi ý.
+
+        Thuật toán (nếu được gọi): đã max cấp → log rồi thôi. Chưa max →
+        `ResourceManager.spend(get_upgrade_cost())` (raise/return False nếu không
+        đủ — tuỳ implementation của `spend`), tăng `_level`, tính lại `_max_hp`,
+        hồi thêm `HP_PER_LEVEL` (không vượt max mới).
+
+        Chỉ số: balance.COMMANDER_UPGRADE_COSTS, balance.COMMANDER_HP_PER_LEVEL.
+        """
         from structures.buildings.resource_manager import ResourceManager
 
         if self._level >= self.MAX_LEVEL:
@@ -868,4 +1126,10 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
         logger.info("%s upgraded → lv %d", self.NAME, self._level)
 
     def get_upgrade_cost(self) -> ResourceBundle:
+        """Chi phí để nâng lên cấp TIẾP THEO — tra `UPGRADE_COSTS[level]`.
+
+        Không có mốc giá cho cấp hiện tại (vd cấp > 5, bảng chỉ định nghĩa tới 5)
+        → trả `ResourceBundle()` rỗng (miễn phí — cần xem xét nếu `upgrade()`
+        được kích hoạt dùng thật trong tương lai).
+        """
         return self.UPGRADE_COSTS.get(self._level, ResourceBundle())

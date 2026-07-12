@@ -10,20 +10,27 @@ KHÔNG cần import gì từ characters/ — giữ tách biệt hoàn toàn vớ
 """
 import pygame
 
+from ui.nine_slice import draw_button, draw_nine_slice, draw_ribbon_title
 
-def run_commander_select(screen, clock, options, mode_label: str = ''):
+
+def run_commander_select(screen, clock, options, mode_label: str = '', portraits=None):
     """Vòng lặp blocking chọn tướng.
 
     Args:
         screen, clock : đối tượng pygame hiện hành.
         options       : list[(display_name, commander_class)].
         mode_label    : nhãn chế độ ('VUOT AI...' / 'THAO TRUONG...').
+        portraits     : dict[commander_class, pygame.Surface] tuỳ chọn — ảnh
+                         đại diện (frame idle của tướng) hiển thị giữa mỗi
+                         thẻ. Không truyền hoặc thiếu key cho class nào →
+                         thẻ đó chỉ hiện tên (không vẽ ảnh).
 
     Returns:
         commander_class được chọn, hoặc None nếu huỷ.
     """
+    portraits = portraits or {}
     W, H = screen.get_size()
-    title_font = pygame.font.SysFont('consolas', 40, bold=True)
+    title_font = pygame.font.SysFont('consolas', 32, bold=True)
     name_font  = pygame.font.SysFont('consolas', 24, bold=True)
     info_font  = pygame.font.SysFont('consolas', 16)
     btn_font   = pygame.font.SysFont('consolas', 24, bold=True)
@@ -39,6 +46,14 @@ def run_commander_select(screen, clock, options, mode_label: str = ''):
     ]
     confirm_rect = pygame.Rect(W // 2 - 130, y0 + ch + 28, 260, 54)
     cancel_rect  = pygame.Rect(W // 2 - 130, y0 + ch + 92, 260, 38)
+
+    # Panel giấy bao toàn bộ khu vực (banner + card + nút) — thẻ tướng vẫn giữ
+    # màu navy riêng, chỉ thêm khung giấy da làm nền chung (kiểu cuộn da RPG).
+    _pad_x, _pad_top, _pad_bottom = 44, 100, 36
+    panel_rect = pygame.Rect(0, 0, total_w + _pad_x * 2,
+                             _pad_top + ch + 130 + _pad_bottom)
+    panel_rect.centerx = W // 2
+    panel_rect.top = y0 - _pad_top
 
     selected = None
     while True:
@@ -63,11 +78,12 @@ def run_commander_select(screen, clock, options, mode_label: str = ''):
         overlay.fill((8, 10, 16, 236))
         screen.blit(overlay, (0, 0))
 
-        title = title_font.render("TRIEU HOI TUONG", True, (235, 225, 190))
-        screen.blit(title, title.get_rect(center=(W // 2, y0 - 64)))
+        draw_nine_slice(screen, panel_rect, style='paper')
+        banner_rect = draw_ribbon_title(screen, panel_rect, "SUMMON COMMANDER",
+                                        title_font, color='teal')
         if mode_label:
-            ml = info_font.render(mode_label, True, (150, 170, 200))
-            screen.blit(ml, ml.get_rect(center=(W // 2, y0 - 28)))
+            ml = info_font.render(mode_label, True, (90, 78, 55))
+            screen.blit(ml, ml.get_rect(center=(W // 2, banner_rect.bottom + 16)))
 
         for rect, name, cls in cards:
             is_sel = (cls is selected)
@@ -77,21 +93,30 @@ def run_commander_select(screen, clock, options, mode_label: str = ''):
             pygame.draw.rect(screen, bd, rect, 3 if is_sel else 2, border_radius=10)
             nm = name_font.render(str(name), True, (235, 235, 245))
             screen.blit(nm, nm.get_rect(center=(rect.centerx, rect.top + 44)))
-            hint = info_font.render("Click de chon", True, (130, 140, 160))
+            _portrait = portraits.get(cls)
+            if _portrait is not None:
+                _pw, _ph = _portrait.get_size()
+                if _pw > 0 and _ph > 0:
+                    _box = 180
+                    _pscale = min(_box / _pw, _box / _ph)
+                    _sw, _sh = int(_pw * _pscale), int(_ph * _pscale)
+                    _pscaled = pygame.transform.scale(_portrait, (_sw, _sh))
+                    screen.blit(_pscaled, _pscaled.get_rect(
+                        center=(rect.centerx, rect.top + 44 + 24 + _box // 2)))
+            hint = info_font.render("Click to select", True, (130, 140, 160))
             screen.blit(hint, hint.get_rect(center=(rect.centerx, rect.bottom - 32)))
 
         active = selected is not None
-        pygame.draw.rect(screen, (40, 90, 50) if active else (40, 44, 50),
-                         confirm_rect, border_radius=8)
-        pygame.draw.rect(screen, (90, 200, 110) if active else (70, 75, 85),
-                         confirm_rect, 2, border_radius=8)
-        ct = btn_font.render("TRIEU HOI", True,
-                             (200, 255, 210) if active else (120, 125, 135))
-        screen.blit(ct, ct.get_rect(center=confirm_rect.center))
+        if active:
+            draw_button(screen, confirm_rect, "SUMMON", style='blue', font=btn_font,
+                       hover=confirm_rect.collidepoint(mpos))
+        else:
+            pygame.draw.rect(screen, (40, 44, 50), confirm_rect, border_radius=8)
+            pygame.draw.rect(screen, (70, 75, 85), confirm_rect, 2, border_radius=8)
+            ct = btn_font.render("SUMMON", True, (120, 125, 135))
+            screen.blit(ct, ct.get_rect(center=confirm_rect.center))
 
-        pygame.draw.rect(screen, (60, 40, 40), cancel_rect, border_radius=8)
-        pygame.draw.rect(screen, (160, 90, 90), cancel_rect, 1, border_radius=8)
-        cct = info_font.render("Huy (ESC)", True, (210, 170, 170))
-        screen.blit(cct, cct.get_rect(center=cancel_rect.center))
+        draw_button(screen, cancel_rect, "CANCEL (ESC)", style='red', font=info_font,
+                   hover=cancel_rect.collidepoint(mpos))
 
         pygame.display.flip()

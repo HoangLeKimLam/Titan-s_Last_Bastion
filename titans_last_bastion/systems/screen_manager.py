@@ -45,6 +45,10 @@ class ScreenManager:
     """
 
     def __init__(self) -> None:
+        """Khởi tạo ở MENU, chưa chọn chế độ chiến đấu, màn Vượt Ải bắt đầu
+        từ 1. Đây là điểm bắt đầu MỌI phiên chơi mới (state không load từ
+        save ở đây — save/restore `current_level` là trách nhiệm của caller,
+        vd `game.py` sau khi đọc `save.json`)."""
         self.phase: str        = PHASE_MENU
         self.combat_mode       = None   # None | MODE_VUOT_AI | MODE_THAO_TRUONG
         self.current_level: int = 1     # màn Vượt Ải hiện tại (1..MAX_LEVEL)
@@ -52,22 +56,31 @@ class ScreenManager:
     # --- Truy vấn nhanh ----------------------------------------------------
     @property
     def is_menu(self) -> bool:
+        """True nếu đang ở màn hình chính (New Game/Continue/Exit)."""
         return self.phase == PHASE_MENU
 
     @property
     def is_lobby(self) -> bool:
+        """True nếu đang ở Sảnh (xây dựng/farm, KHÔNG có titan/tướng) —
+        game.py dùng để KHOÁ mọi logic combat (spawn titan, tướng di chuyển...)."""
         return self.phase == PHASE_LOBBY
 
     @property
     def is_combat(self) -> bool:
+        """True nếu đang trong pha chiến đấu thực sự (có titan + tướng) —
+        game.py dùng để CHỈ CHO PHÉP xây tháp/spawn titan khi ở pha này."""
         return self.phase == PHASE_COMBAT
 
     @property
     def is_vuot_ai(self) -> bool:
+        """True nếu chế độ chiến đấu hiện tại là Vượt Ải (có phạt thua,
+        lên màn tuần tự) — CHỈ có ý nghĩa khi `is_combat` cũng True."""
         return self.combat_mode == MODE_VUOT_AI
 
     @property
     def is_thao_truong(self) -> bool:
+        """True nếu chế độ hiện tại là Thao Trường (luyện tập tự do, không
+        phạt thua, không lên màn) — CHỈ có ý nghĩa khi `is_combat` cũng True."""
         return self.combat_mode == MODE_THAO_TRUONG
 
     # --- Chuyển pha --------------------------------------------------------
@@ -93,9 +106,9 @@ class ScreenManager:
 
     # --- Hiển thị ----------------------------------------------------------
     def mode_label(self) -> str:
-        """Nhãn ASCII hiển thị trên banner pha chiến đấu."""
+        """Nhãn hiển thị trên banner pha chiến đấu."""
         if self.combat_mode == MODE_VUOT_AI:
-            return f'VUOT AI  -  Man {self.current_level}/{MAX_LEVEL}'
+            return f'MAIN CAMPAIGN  -  Level {self.current_level}/{MAX_LEVEL}'
         if self.combat_mode == MODE_THAO_TRUONG:
-            return 'THAO TRUONG TU DO'
+            return 'FREE TRAINING'
         return ''

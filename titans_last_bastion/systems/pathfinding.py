@@ -3,19 +3,45 @@ import heapq
 from systems.world_query import WorldQuery
 
 class AStarPathfinder:
+    """A* trên lưới 64px — dùng cho lính khi cần chuyển tháp CỰ LY XA (băng
+    qua tường, không phải lỗ hổng gần). Khác `pathmove.follow_path()`
+    (steering nhẹ O(1)/frame, chỉ né tường cục bộ): A* tính TRƯỚC toàn bộ
+    tuyến đường 1 lần, tốn hơn nhưng tìm được đường VÒNG QUA tường dài mà
+    steering không thể tự thoát ra. Toàn bộ method là `@classmethod` —
+    class này không có state instance, chỉ là namespace thuật toán."""
     CELL_SIZE = 64.0
 
     @classmethod
     def get_cell(cls, x: float, y: float) -> tuple[int, int]:
+        """Quy đổi toạ độ thế giới (px) → chỉ số ô lưới A* (chia nguyên cho
+        `CELL_SIZE`=64px)."""
         return (int(x // cls.CELL_SIZE), int(y // cls.CELL_SIZE))
 
     @classmethod
     def _get_search_bounds(cls, sx: float, sy: float, tx: float, ty: float):
+        """Thu hẹp phạm vi tìm kiếm A* về ĐÚNG 1 VÒNG TƯỜNG (Sina/Rose/Maria)
+        thay vì quét TOÀN BẢN ĐỒ — tối ưu hiệu năng cho trường hợp phổ biến
+        (lính chuyển tháp cùng vùng hoặc vùng liền kề).
+
+        Thuật toán: xác định điểm bắt đầu/đích thuộc "outermost box" nào
+        (vùng NGOÀI CÙNG chứa nó, kể cả nới rộng 64px — ưu tiên Sina trong
+        cùng, tới Rose, tới Maria, không khớp gì → 'field' ngoài mọi vòng
+        tường). Lấy `max_order` giữa 2 điểm (vùng NGOÀI HƠN quyết định) —
+        NẾU CẢ 2 đều ở 'field' (order 4, ngoài mọi vòng tường) → return
+        None (không giới hạn được, phải quét toàn map ở `find_path`).
+        NGƯỢC LẠI, dùng bounding box của vòng tường tương ứng `max_order`,
+        MỞ RỘNG THÊM 16px mỗi cạnh (đủ bao trọn tâm ô chứa chính bức tường,
+        nhưng CHƯA đủ để lọt sang ô field kế tiếp cách 64px — biên an toàn
+        có chủ đích).
+        """
         boxes = getattr(WorldQuery, '_zone_boxes', {})
         if not boxes:
             return None
-            
+
         def _get_outermost_box(x, y):
+            """Tìm vòng tường NGOÀI CÙNG (theo thứ tự sina→rose→maria) mà
+            (x,y) nằm trong (nới rộng 64px mỗi cạnh) — 'field' nếu không
+            khớp vòng nào (ở ngoài mọi bức tường)."""
             for z in ['sina', 'rose', 'maria']:
                 if z in boxes:
                     l, t, r, b = boxes[z]
@@ -41,6 +67,16 @@ class AStarPathfinder:
     @classmethod
     def find_path(cls, sx: float, sy: float, tx: float, ty: float,
                   radius: float = 16.0, buffer: float = 12.0) -> list[tuple[float, float]]:
+        """API công khai — tìm đường từ (sx,sy) tới (tx,ty), trả list
+        waypoint (px) đã VUỐT MƯỢT (không phải từng ô lưới thô).
+
+        Thuật toán 2 tầng: (1) thử tìm trong phạm vi thu hẹp bởi
+        `_get_search_bounds()` (nhanh, đủ cho ca thường gặp); (2) nếu KHÔNG
+        tìm được đường thật (kết quả chỉ là fallback 1-điểm-đích, nghĩa là
+        A* bị giới hạn quá chặt bởi bounds) → CHẠY LẠI không giới hạn
+        (`bounds=None`) trên toàn bản đồ — chấp nhận chậm hơn để tìm được
+        đường vòng xa khi cần.
+        """
         bounds = cls._get_search_bounds(sx, sy, tx, ty)
         if bounds:
             # Ưu tiên tìm trong vùng giới hạn (cùng vùng hoặc xuyên vùng gần nhất)

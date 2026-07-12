@@ -4,7 +4,7 @@ game_state.py — Túi tài nguyên và trạng thái toàn cục của game.
 Tại sao cần file này?
     ResourceBundle gom 8 loại tài nguyên vào 1 object duy nhất.
     Thay vì truyền 8 tham số riêng lẻ:
-        spend(wood=50, stone=20, gas=0, food=0, ...)   ← rối
+        spend(wood=50, stone=20, anti_stun=0, food=0, ...)   ← rối
     Ta chỉ cần:
         spend(ResourceBundle(wood=50, stone=20))        ← gọn
 
@@ -31,7 +31,7 @@ class ResourceBundle:
     """
     Túi chứa toàn bộ tài nguyên và vũ khí của game.
 
-    Nguyên liệu cơ bản: wood, stone, gas, food, ore, serum
+    Nguyên liệu cơ bản: wood, stone, anti_stun, food, ore, serum
     Quặng đặc biệt: fire_ore, ice_ore, electric_ore, water_ore, wind_ore, acid_ore, anti_armor_ore
     Khác: titan_pheromone
     Vũ khí tháp: tower_weapon, basic_projectlie, ice_projectlie, electric_projectlie, water_projectlie
@@ -40,13 +40,13 @@ class ResourceBundle:
 
     Toán tử hỗ trợ:
         +   : cộng 2 túi (loot, sản xuất)
-        *   : nhân float — penalty chỉ áp lên wood/stone/gas/food
+        *   : nhân float — penalty chỉ áp lên wood/stone/anti_stun/food
         >=  : kiểm tra đủ tài nguyên để chi tiêu (tất cả field)
     """
     # Thông số về nguyên liệu cơ bản
     wood:            int = 0
     stone:           int = 0
-    gas:             int = 0
+    anti_stun:             int = 0
     food:            int = 0
     ore:             int = 0
     serum:           int = 0
@@ -69,7 +69,7 @@ class ResourceBundle:
     explode_trap:    int = 0
     bait_trap:    int = 0
     poison_trap:    int = 0
-    smoke_trap:    int = 0
+    suriken_trap:    int = 0
     soldier_weapon:    int = 0
     sword:    int = 0
     spear:    int = 0
@@ -78,10 +78,14 @@ class ResourceBundle:
     heavy_arrow:    int = 0
 
     def __add__(self, other: "ResourceBundle") -> "ResourceBundle":
+        """Cộng dồn 2 túi tài nguyên, field-by-field (TẤT CẢ field, khác
+        `__mul__` chỉ nhân 4 loại cơ bản) — trả TÚI MỚI (immutable, không
+        sửa `self`/`other`). Dùng khắp nơi: `ResourceManager.earn()`,
+        `Building.produce()` cộng vào `_stock`, `ExpeditionParty.loot`..."""
         return ResourceBundle(
             wood               = self.wood               + other.wood,
             stone              = self.stone              + other.stone,
-            gas                = self.gas                + other.gas,
+            anti_stun                = self.anti_stun                + other.anti_stun,
             food               = self.food               + other.food,
             ore                = self.ore                + other.ore,
             serum              = self.serum              + other.serum,
@@ -103,7 +107,7 @@ class ResourceBundle:
             explode_trap       = self.explode_trap       + other.explode_trap,
             bait_trap          = self.bait_trap          + other.bait_trap,
             poison_trap        = self.poison_trap        + other.poison_trap,
-            smoke_trap         = self.smoke_trap         + other.smoke_trap,
+            suriken_trap         = self.suriken_trap         + other.suriken_trap,
             soldier_weapon     = self.soldier_weapon     + other.soldier_weapon,
             sword              = self.sword              + other.sword,
             spear              = self.spear              + other.spear,
@@ -127,14 +131,14 @@ class ResourceBundle:
             - Penalty thua màn: self._stock = self._stock * 0.8
 
         Lưu ý:
-            Chỉ nhân 4 loại tài nguyên cơ bản (wood, stone, gas, food).
+            Chỉ nhân 4 loại tài nguyên cơ bản (wood, stone, anti_stun, food).
             ore, crystal, serum, anti_armor_bolt KHÔNG bị penalty.
 
         Hướng dẫn code:
             return ResourceBundle(
                 wood  = int(self.wood  * factor),
                 stone = int(self.stone * factor),
-                gas   = int(self.gas   * factor),
+                anti_stun   = int(self.anti_stun   * factor),
                 food  = int(self.food  * factor),
                 ore             = self.ore,
                 crystal         = self.crystal,
@@ -150,7 +154,7 @@ class ResourceBundle:
         return ResourceBundle(
             wood               = int(self.wood  * factor),
             stone              = int(self.stone * factor),
-            gas                = int(self.gas   * factor),
+            anti_stun                = int(self.anti_stun   * factor),
             food               = int(self.food  * factor),
             ore                = self.ore,
             serum              = self.serum,
@@ -172,7 +176,7 @@ class ResourceBundle:
             explode_trap       = self.explode_trap,
             bait_trap          = self.bait_trap,
             poison_trap        = self.poison_trap,
-            smoke_trap         = self.smoke_trap,
+            suriken_trap         = self.suriken_trap,
             soldier_weapon     = self.soldier_weapon,
             sword              = self.sword,
             spear              = self.spear,
@@ -200,7 +204,7 @@ class ResourceBundle:
             return (
                 self.wood            >= cost.wood
                 and self.stone       >= cost.stone
-                and self.gas         >= cost.gas
+                and self.anti_stun         >= cost.anti_stun
                 and self.food        >= cost.food
                 and self.ore         >= cost.ore
                 and self.crystal     >= cost.crystal
@@ -218,7 +222,7 @@ class ResourceBundle:
         return (
             self.wood                >= cost.wood
             and self.stone           >= cost.stone
-            and self.gas             >= cost.gas
+            and self.anti_stun             >= cost.anti_stun
             and self.food            >= cost.food
             and self.ore             >= cost.ore
             and self.serum           >= cost.serum
@@ -240,7 +244,7 @@ class ResourceBundle:
             and self.explode_trap    >= cost.explode_trap
             and self.bait_trap       >= cost.bait_trap
             and self.poison_trap     >= cost.poison_trap
-            and self.smoke_trap      >= cost.smoke_trap
+            and self.suriken_trap      >= cost.suriken_trap
             and self.soldier_weapon  >= cost.soldier_weapon
             and self.sword           >= cost.sword
             and self.spear           >= cost.spear

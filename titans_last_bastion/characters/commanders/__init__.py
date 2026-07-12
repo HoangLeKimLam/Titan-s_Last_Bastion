@@ -1,19 +1,16 @@
 # characters/commanders/__init__.py
 from characters.commanders.commander import Commander
-from characters.commanders.eren import ErenCommander
 from characters.commanders.mikasa import MikasaCommander
-from characters.commanders.armin import ArminCommander
+from characters.commanders.eren import ErenCommander
 
 COMMANDER_TYPES: dict = {
-    "Eren": ErenCommander,
     "Mikasa": MikasaCommander,
-    "Armin": ArminCommander,
+    "Eren": ErenCommander,
 }
 
 __all__ = [
     "Commander",
-    "ErenCommander",
     "MikasaCommander",
-    "ArminCommander",
+    "ErenCommander",
     "COMMANDER_TYPES",
 ]

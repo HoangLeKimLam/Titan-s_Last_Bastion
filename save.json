@@ -1,13 +1,13 @@
 {
   "current_level": 1,
   "resources": {
-    "wood": 340,
-    "stone": 216,
-    "gas": 0,
-    "food": 160,
-    "ore": 64,
+    "wood": 335,
+    "stone": 222,
+    "anti_stun": 0,
+    "food": 100,
+    "ore": 76,
     "serum": 0,
-    "fire_ore": 999,
+    "fire_ore": 998,
     "ice_ore": 999,
     "electric_ore": 999,
     "water_ore": 999,
@@ -25,7 +25,7 @@
     "explode_trap": 0,
     "bait_trap": 0,
     "poison_trap": 0,
-    "smoke_trap": 0,
+    "suriken_trap": 0,
     "soldier_weapon": 0,
     "sword": 0,
     "spear": 0,
@@ -33,12 +33,7 @@
     "poison_arrow": 0,
     "heavy_arrow": 0
   },
-  "commander_stats": {
-    "Eren Yeager": {
-      "level": 1,
-      "xp": 70
-    }
-  },
+  "commander_stats": {},
   "wall_sections": [
     {
       "x": 448,
@@ -204,14 +199,14 @@
     {
       "x": 1587,
       "y": 416,
-      "hp": 5170,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
     {
       "x": 1646,
       "y": 416,
-      "hp": 5140,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -253,21 +248,21 @@
     {
       "x": 2000,
       "y": 416,
-      "hp": 5450,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
     {
       "x": 2059,
       "y": 416,
-      "hp": 3110,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
     {
       "x": 2118,
       "y": 416,
-      "hp": 5590,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -351,7 +346,7 @@
     {
       "x": 2826,
       "y": 416,
-      "hp": 8560,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -414,7 +409,7 @@
     {
       "x": 3357,
       "y": 416,
-      "hp": 9115,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -477,7 +472,7 @@
     {
       "x": 3888,
       "y": 416,
-      "hp": 8425,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -862,7 +857,7 @@
     {
       "x": 2644,
       "y": 3814,
-      "hp": 2260,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -967,7 +962,7 @@
     {
       "x": 3529,
       "y": 3814,
-      "hp": 5680,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1009,7 +1004,7 @@
     {
       "x": 3883,
       "y": 3814,
-      "hp": 200,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1023,16 +1018,16 @@
     {
       "x": 4001,
       "y": 3814,
-      "hp": 3350,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
     {
       "x": 4060,
       "y": 3814,
-      "hp": -150,
+      "hp": 10000,
       "max_hp": 10000,
-      "alive": false
+      "alive": true
     },
     {
       "x": 4119,
@@ -1366,7 +1361,7 @@
     {
       "x": 448,
       "y": 2266,
-      "hp": 4960,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1499,7 +1494,7 @@
     {
       "x": 448,
       "y": 3292,
-      "hp": 4240,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1632,7 +1627,7 @@
     {
       "x": 4918,
       "y": 1024,
-      "hp": 4330,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1730,7 +1725,7 @@
     {
       "x": 4918,
       "y": 1780,
-      "hp": 2800,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1779,7 +1774,7 @@
     {
       "x": 4918,
       "y": 2158,
-      "hp": 2800,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1800,7 +1795,7 @@
     {
       "x": 4918,
       "y": 2320,
-      "hp": 4330,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1842,14 +1837,14 @@
     {
       "x": 4918,
       "y": 2644,
-      "hp": -150,
+      "hp": 10000,
       "max_hp": 10000,
-      "alive": false
+      "alive": true
     },
     {
       "x": 4918,
       "y": 2698,
-      "hp": 5100,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1926,7 +1921,7 @@
     {
       "x": 4918,
       "y": 3292,
-      "hp": 1425,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -3680,5 +3675,111 @@
       "level": 1,
       "alive": true
     }
-  ]
+  ],
+  "towers": [
+    {
+      "wall_x": 3282,
+      "wall_y": 1792,
+      "type": "BasicTower",
+      "hp": 2000,
+      "max_hp": 2000,
+      "level": 2,
+      "damage": 300,
+      "garrison": {
+        "Archer": 0,
+        "Lancer": 0,
+        "Warrior": 0
+      },
+      "wave_order": [
+        "Warrior",
+        "Lancer",
+        "Archer"
+      ],
+      "alive": true
+    }
+  ],
+  "traps": [],
+  "training_idle": {
+    "Warrior": 0,
+    "Archer": 0,
+    "Lancer": 0
+  },
+  "training_hungry": {
+    "Warrior": 0,
+    "Archer": 0,
+    "Lancer": 0
+  },
+  "training_disarmed": {
+    "Warrior": 0,
+    "Archer": 0,
+    "Lancer": 0
+  },
+  "chopped_trees": [],
+  "hq_hp": 5000,
+  "weapon_stock": {
+    "wood": 0,
+    "stone": 0,
+    "anti_stun": 0,
+    "food": 0,
+    "ore": 0,
+    "serum": 0,
+    "fire_ore": 0,
+    "ice_ore": 0,
+    "electric_ore": 0,
+    "water_ore": 0,
+    "wind_ore": 0,
+    "acid_ore": 0,
+    "anti_armor_ore": 0,
+    "titan_pheromone": 0,
+    "tower_weapon": 600,
+    "basic_projectlie": 300,
+    "ice_projectlie": 0,
+    "electric_projectlie": 0,
+    "water_projectlie": 0,
+    "trap": 150,
+    "thorn_trap": 60,
+    "explode_trap": 0,
+    "bait_trap": 0,
+    "poison_trap": 0,
+    "suriken_trap": 0,
+    "soldier_weapon": 300,
+    "sword": 150,
+    "spear": 150,
+    "arrow": 120,
+    "poison_arrow": 0,
+    "heavy_arrow": 0
+  },
+  "weapon_used": {
+    "wood": 0,
+    "stone": 0,
+    "anti_stun": 0,
+    "food": 0,
+    "ore": 0,
+    "serum": 0,
+    "fire_ore": 0,
+    "ice_ore": 0,
+    "electric_ore": 0,
+    "water_ore": 0,
+    "wind_ore": 0,
+    "acid_ore": 0,
+    "anti_armor_ore": 0,
+    "titan_pheromone": 0,
+    "tower_weapon": 10,
+    "basic_projectlie": 10,
+    "ice_projectlie": 0,
+    "electric_projectlie": 0,
+    "water_projectlie": 0,
+    "trap": 0,
+    "thorn_trap": 0,
+    "explode_trap": 0,
+    "bait_trap": 0,
+    "poison_trap": 0,
+    "suriken_trap": 0,
+    "soldier_weapon": 0,
+    "sword": 0,
+    "spear": 0,
+    "arrow": 0,
+    "poison_arrow": 0,
+    "heavy_arrow": 0
+  }
 }

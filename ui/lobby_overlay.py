@@ -13,6 +13,8 @@ Hàm KHÔNG đụng tới logic game.
 """
 import pygame
 
+from ui.nine_slice import draw_button, draw_nine_slice, draw_ribbon_title
+
 
 def draw_lobby_overlay(screen, level: int) -> dict:
     """Vẽ 2 nút chọn chế độ ở Sảnh. Trả về {'vuot_ai': Rect, 'thao_truong': Rect}."""
@@ -30,24 +32,26 @@ def draw_lobby_overlay(screen, level: int) -> dict:
     banner = pygame.Surface((total + 40, bh + 46), pygame.SRCALPHA)
     banner.fill((10, 14, 22, 185))
     screen.blit(banner, (x0 - 20, y - 8))
-    lbl = sub_font.render("SANH CHUAN BI  -  Chon che do chien dau", True, (150, 165, 190))
+    lbl = sub_font.render("PREPARATION HALL  -  Choose Combat Mode", True, (150, 165, 190))
     screen.blit(lbl, (x0, y - 4))
     y += 18
 
     va = pygame.Rect(x0, y, bw, bh)
     tt = pygame.Rect(x0 + bw + gap, y, bw, bh)
     specs = [
-        (va, "VUOT AI", f"Thu thach chinh - Man {level}/5", (60, 40, 40), (120, 70, 70)),
-        (tt, "THAO TRUONG TU DO", "Luyen tap - khong phat", (40, 55, 40), (70, 110, 70)),
+        (va, "MAIN CAMPAIGN", f"Main Challenge - Level {level}/5"),
+        (tt, "FREE TRAINING", "Training - No Penalty"),
     ]
-    for rect, label, sub, base, hov in specs:
+    for rect, label, sub in specs:
         hover = rect.collidepoint(mpos)
-        pygame.draw.rect(screen, hov if hover else base, rect, border_radius=8)
-        pygame.draw.rect(screen, (210, 180, 120) if hover else (120, 120, 130),
-                         rect, 2, border_radius=8)
-        t = title_font.render(label, True, (240, 225, 200))
+        draw_nine_slice(screen, rect, style='blue')
+        if hover:
+            _hl = pygame.Surface(rect.size, pygame.SRCALPHA)
+            _hl.fill((255, 255, 255, 35))
+            screen.blit(_hl, rect.topleft)
+        t = title_font.render(label, True, (250, 248, 240))
         screen.blit(t, t.get_rect(center=(rect.centerx, rect.centery - 8)))
-        s = sub_font.render(sub, True, (190, 190, 200))
+        s = sub_font.render(sub, True, (225, 225, 235))
         screen.blit(s, s.get_rect(center=(rect.centerx, rect.centery + 16)))
 
     return {'vuot_ai': va, 'thao_truong': tt}
@@ -70,13 +74,8 @@ def draw_combat_controls(screen, mode_label: str) -> dict:
     screen.blit(t, t.get_rect(center=(x0 + banner_w // 2, y + 15)))
 
     end_rect = pygame.Rect(W - bw - 16, y, bw, bh)
-    hover = end_rect.collidepoint(pygame.mouse.get_pos())
-    pygame.draw.rect(screen, (90, 50, 50) if hover else (60, 36, 36),
-                     end_rect, border_radius=6)
-    pygame.draw.rect(screen, (210, 120, 120) if hover else (140, 80, 80),
-                     end_rect, 2, border_radius=6)
-    el = title_font.render("KET THUC TRAN", True, (255, 210, 200))
-    screen.blit(el, el.get_rect(center=end_rect.center))
+    draw_button(screen, end_rect, "END BATTLE", style='red', font=title_font,
+               hover=end_rect.collidepoint(pygame.mouse.get_pos()))
 
     return {'end': end_rect}
 
@@ -96,44 +95,32 @@ def draw_thao_truong_wave_select(screen, wave_chosen: int,
     pw, ph = 420, 230
     px = (W - pw) // 2
     py = (H - ph) // 2
+    panel_rect = pygame.Rect(px, py, pw, ph)
 
-    panel = pygame.Surface((pw, ph), pygame.SRCALPHA)
-    panel.fill((14, 20, 16, 235))
-    screen.blit(panel, (px, py))
-    pygame.draw.rect(screen, (90, 150, 90), (px, py, pw, ph), 2, border_radius=10)
+    draw_nine_slice(screen, panel_rect, style='paper')
+    banner_rect = draw_ribbon_title(screen, panel_rect, "FREE TRAINING",
+                                    title_font, color='teal')
 
-    t = title_font.render("THAO TRUONG TU DO", True, (200, 235, 200))
-    screen.blit(t, t.get_rect(center=(px + pw // 2, py + 30)))
-    s = body_font.render("Chon Wave bat dau:", True, (170, 200, 175))
-    screen.blit(s, s.get_rect(center=(px + pw // 2, py + 70)))
+    s = body_font.render("Choose Starting Wave:", True, (70, 60, 45))
+    screen.blit(s, s.get_rect(center=(px + pw // 2, banner_rect.bottom + 20)))
 
     # Nút giảm / số / nút tăng
-    cy = py + 120
+    cy = banner_rect.bottom + 90
     dec = pygame.Rect(px + 90, cy - 24, 48, 48)
     inc = pygame.Rect(px + pw - 90 - 48, cy - 24, 48, 48)
     for rect, label in ((dec, "-"), (inc, "+")):
-        hover = rect.collidepoint(mpos)
-        pygame.draw.rect(screen, (50, 90, 55) if hover else (35, 60, 40),
-                         rect, border_radius=8)
-        pygame.draw.rect(screen, (120, 200, 120) if hover else (80, 130, 85),
-                         rect, 2, border_radius=8)
-        gl = num_font.render(label, True, (210, 240, 210))
-        screen.blit(gl, gl.get_rect(center=rect.center))
+        draw_button(screen, rect, label, style='blue', font=num_font,
+                   hover=rect.collidepoint(mpos))
 
-    nl = num_font.render(str(wave_chosen), True, (255, 240, 180))
+    nl = num_font.render(str(wave_chosen), True, (120, 90, 20))
     screen.blit(nl, nl.get_rect(center=(px + pw // 2, cy)))
-    rng = body_font.render(f"(toi da: {wave_min}..{wave_max})", True, (130, 160, 135))
+    rng = body_font.render(f"(max: {wave_min}..{wave_max})", True, (95, 85, 65))
     screen.blit(rng, rng.get_rect(center=(px + pw // 2, cy + 36)))
 
     # Nút xác nhận
     confirm = pygame.Rect(px + (pw - 200) // 2, py + ph - 50, 200, 36)
-    hover = confirm.collidepoint(mpos)
-    pygame.draw.rect(screen, (50, 110, 60) if hover else (38, 80, 46),
-                     confirm, border_radius=8)
-    pygame.draw.rect(screen, (120, 220, 130) if hover else (80, 150, 90),
-                     confirm, 2, border_radius=8)
-    cl = title_font.render("XAC NHAN", True, (220, 250, 220))
-    screen.blit(cl, cl.get_rect(center=confirm.center))
+    draw_button(screen, confirm, "CONFIRM", style='blue', font=title_font,
+               hover=confirm.collidepoint(mpos))
 
     return {'dec': dec, 'inc': inc, 'confirm': confirm}
 
@@ -154,9 +141,9 @@ def draw_thao_truong_controls(screen, wave: int, titan_alive: int,
     banner = pygame.Surface((banner_w, 30), pygame.SRCALPHA)
     banner.fill((12, 20, 14, 190))
     screen.blit(banner, (x0, y))
-    t = title_font.render(f"THAO TRUONG  -  Wave {wave}", True, (200, 240, 200))
+    t = title_font.render(f"TRAINING  -  Wave {wave}", True, (200, 240, 200))
     screen.blit(t, t.get_rect(center=(x0 + banner_w // 2, y + 15)))
-    inf = info_font.render(f"Titan song: {titan_alive}", True,
+    inf = info_font.render(f"Titans alive: {titan_alive}", True,
                            (255, 180, 120) if titan_alive else (140, 170, 145))
     screen.blit(inf, (x0 + 8, y + 34))
 
@@ -165,23 +152,18 @@ def draw_thao_truong_controls(screen, wave: int, titan_alive: int,
 
     # Nút "Wave tiếp theo" (mờ khi wave đang chạy)
     next_rect = pygame.Rect(16, y, bw, bh)
-    _draw_tt_button(screen, next_rect, "WAVE TIEP THEO", title_font,
-                    enabled=not wave_active, mpos=mpos,
-                    base=(36, 60, 40), hov=(50, 95, 56),
-                    border=(90, 160, 95), txt=(210, 250, 210))
+    _draw_tt_button(screen, next_rect, "NEXT WAVE", title_font,
+                    enabled=not wave_active, mpos=mpos, style='blue')
 
     # Nút "Kết thúc luyện tập" (mờ khi wave đang chạy)
     end_rect = pygame.Rect(W - bw - 16, y, bw, bh)
-    _draw_tt_button(screen, end_rect, "KET THUC TRAIN", title_font,
-                    enabled=not wave_active, mpos=mpos,
-                    base=(60, 36, 36), hov=(90, 50, 50),
-                    border=(140, 80, 80), txt=(255, 210, 200))
+    _draw_tt_button(screen, end_rect, "END TRAINING", title_font,
+                    enabled=not wave_active, mpos=mpos, style='red')
 
     return {'next': next_rect, 'end': end_rect}
 
 
-def _draw_tt_button(screen, rect, label, font, enabled, mpos,
-                    base, hov, border, txt) -> None:
+def _draw_tt_button(screen, rect, label, font, enabled, mpos, style='blue') -> None:
     """Vẽ 1 nút Thao Trường có trạng thái bật/mờ."""
     if not enabled:
         pygame.draw.rect(screen, (40, 44, 42), rect, border_radius=6)
@@ -189,11 +171,8 @@ def _draw_tt_button(screen, rect, label, font, enabled, mpos,
         l = font.render(label, True, (110, 115, 112))
         screen.blit(l, l.get_rect(center=rect.center))
         return
-    hover = rect.collidepoint(mpos)
-    pygame.draw.rect(screen, hov if hover else base, rect, border_radius=6)
-    pygame.draw.rect(screen, border, rect, 2, border_radius=6)
-    l = font.render(label, True, txt)
-    screen.blit(l, l.get_rect(center=rect.center))
+    draw_button(screen, rect, label, style=style, font=font,
+               hover=rect.collidepoint(mpos))
 
 
 def draw_combat_minimap(screen, maria_box_px, all_sections,
@@ -236,10 +215,17 @@ def draw_combat_minimap(screen, maria_box_px, all_sections,
     _oy = MM_Y + 14 + (_ch - (my1 - my0) * _scale) / 2
 
     def _mm(wx, wy):
+        """Quy đổi toạ độ thế giới (wx,wy) → toạ độ pixel TRÊN MINIMAP, dùng
+        `_scale`/`_ox`/`_oy` đã tính (fit toàn bộ vòng Maria vào khung
+        minimap, giữ tỉ lệ, căn giữa cả 2 trục)."""
         return (int(_ox + (wx - mx0) * _scale),
                 int(_oy + (wy - my0) * _scale))
 
     def _in(px, py, r=0):
+        """Điểm minimap (px,py) có nằm trong khung minimap không (mở rộng
+        thêm `r` px mỗi cạnh) — dùng để CLIP chấm titan/boss không vẽ tràn
+        ra ngoài khung khi toạ độ world nằm ngoài vòng Maria (r âm/dương
+        cho phép nới lỏng/siết chặt biên tuỳ chỗ gọi)."""
         return (MM_X - r <= px <= MM_X + MM_W + r and
                 MM_Y - r <= py <= MM_Y + MM_H + r)
 

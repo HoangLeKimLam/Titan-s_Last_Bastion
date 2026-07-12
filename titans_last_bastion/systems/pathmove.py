@@ -53,6 +53,19 @@ def follow_path(entity, gx: float, gy: float, speed: float, dt: float,
         # Cấu trúc lớp bọc (Buffer Layers):
         # Tạo lực đẩy mềm mại để lính trượt ở vòng ngoài, không dính vào vùng cấm
         def get_depth(cx, cy):
+            """Đo "độ sâu lấn tường" tại (cx,cy) theo 6 mức (0=an toàn tuyệt
+            đối, 5=kẹt cứng lõi vật lý) — CHỈ dùng cho lính (buffer-layer
+            steering). Kiểm tra từ NGHIÊM NGẶT nhất tới LỎNG nhất, trả về
+            mức ĐẦU TIÊN khớp:
+                5: chạm lõi vật lý 32×32 thật (luôn chặn)
+                4: chạm vùng cấm hình ảnh gốc (visual expanded wall)
+                3/2/1: chạm vùng đệm MỀM dày thêm 4/8/12px quanh tường
+                0: hoàn toàn thoáng
+            Thuật toán steering ở `follow_path` LUÔN so `get_depth(điểm mới)
+            <= get_depth(điểm hiện tại)` — cho phép di chuyển miễn KHÔNG
+            LẤN SÂU HƠN vào tường so với vị trí đang đứng, tạo hiệu ứng
+            "trượt dọc theo bề mặt tường" thay vì bật ra xa hay kẹt cứng.
+            """
             # Depth 5: Lõi vật lý 32x32 (kẹt cứng)
             p_kw = dict(_kw)
             p_kw.pop('ignore_buffer', None)
@@ -272,4 +285,10 @@ def gap_aim(ax: float, ay: float, tx: float, ty: float,
             return cx + side * near, cy, True
 
 def clear_path(entity) -> None:
+    """No-op có chủ đích — `follow_path()` KHÔNG lưu trạng thái đường đi dài
+    hạn trên `entity` ngoài `_pf_slide_vx`/`_pf_slide_vy` (hướng trượt tức
+    thời, tự reset khi đổi hướng ngược lại, xem trong `follow_path`), nên
+    không có gì cần "dọn". Hàm giữ lại để tương thích API với các hệ thống
+    pathfinding khác (vd `AStarPathfinder` trong `pathfinding.py`) có khái
+    niệm "đường đi đã tính" cần xoá khi đổi mục tiêu."""
     pass

@@ -89,11 +89,25 @@ class WorldQuery:
     @classmethod
     def register_zones(cls, maria_box, rose_box, sina_box) -> None:
         """Đăng ký bounding box (PIXEL: left, top, right, bottom) của 3 vòng tường.
-        Cộng thêm 16.0 (nửa tile) để viền bounding box nằm ĐÚNG CHÍNH GIỮA bức tường.
+        Co vào 16.0 (nửa tile) mỗi cạnh để viền bounding box nằm ĐÚNG CHÍNH GIỮA
+        bức tường — left/top CỘNG (tiến vào trong), right/bottom phải TRỪ (cũng
+        tiến vào trong, vì trục tăng dần ra ngoài ở 2 cạnh này).
+
+        FIX: bản cũ cộng đều +16.0 cho CẢ 4 giá trị — đúng cho left/top nhưng
+        SAI DẤU cho right/bottom (lẽ ra phải trừ để tiến vào trong, cộng lại
+        đẩy biên ra NGOÀI xa hơn mép tường thật). Hậu quả: mọi zone (maria/
+        rose/sina) đều "rò" 16px ở cạnh NAM và ĐÔNG (bắc/tây thì đúng vì dấu
+        cộng vốn đúng ở 2 cạnh đó) — điểm vừa ra khỏi tường ở phía nam/đông
+        vẫn bị tính nhầm là "trong vùng", khiến titan/prey 2 bên 1 bức tường
+        còn nguyên vẹn ở phía nam bị same_zone() coi là cùng vùng.
         """
         def _center_box(box):
-            return tuple(float(v) + 16.0 for v in box)
-            
+            """Co bounding box vào 16px (nửa tile) MỖI CẠNH ĐÚNG DẤU (left/top
+            CỘNG, right/bottom TRỪ — cả 2 đều "tiến vào trong") để viền box
+            nằm giữa TÂM bức tường thay vì mép ngoài của nó."""
+            l, t, r, b = box
+            return (float(l) + 16.0, float(t) + 16.0, float(r) - 16.0, float(b) - 16.0)
+
         cls._zone_boxes = {
             'maria': _center_box(maria_box),
             'rose':  _center_box(rose_box),
@@ -104,6 +118,8 @@ class WorldQuery:
     def zone_of(cls, x: float, y: float) -> str:
         """Trả về vùng chứa điểm (x, y): 'sina' | 'rose' | 'maria' | 'field'."""
         def _inside(box) -> bool:
+            """(x,y) có nằm trong `box` (AABB, đã co tâm bởi `_center_box`)
+            không — dùng test lần lượt sina→rose→maria (trong ra ngoài)."""
             l, t, r, b = box
             return l <= x <= r and t <= y <= b
         z = cls._zone_boxes
@@ -580,6 +596,11 @@ class WorldQuery:
 
     @classmethod
     def _alive_wall_count(cls) -> int:
+        """Đếm số WallSection CÒN SỐNG hiện tại — dùng làm "chữ ký thay đổi"
+        rẻ tiền: `_ensure_pf_grid()` so số này với `_pf_built_walls` (số lúc
+        dựng lưới lần trước) để phát hiện tường vừa sập/vá MÀ KHÔNG CẦN gọi
+        `invalidate_pathfinding()` tường minh ở mọi nơi tường có thể đổi
+        trạng thái — lưới đường A* tự phát hiện lỗi thời."""
         return sum(1 for w in cls._entities
                    if getattr(w, 'ENTITY_TYPE', None) == 'wall'
                    and getattr(w, 'is_alive', True))
@@ -609,6 +630,11 @@ class WorldQuery:
 
     @classmethod
     def _ensure_pf_grid(cls) -> None:
+        """Dựng lại lưới pathfinding NẾU CẦN — gọi ở ĐẦU MỌI thao tác dùng
+        lưới (`find_path`), lazy-rebuild thay vì rebuild mỗi frame. Điều
+        kiện rebuild: cờ `_pf_dirty` (set tường minh bởi `invalidate_pathfinding`)
+        HOẶC số tường sống đã đổi so với lần dựng trước (`_alive_wall_count`)
+        — bắt được cả những thay đổi KHÔNG gọi invalidate tường minh."""
         if cls._pf_cols == 0:
             return  # chưa configure
         if cls._pf_dirty or cls._alive_wall_count() != cls._pf_built_walls:
@@ -616,10 +642,12 @@ class WorldQuery:
 
     @classmethod
     def _pf_in_bounds(cls, c: int, r: int) -> bool:
+        """Ô lưới (c,r) có nằm trong biên bản đồ đã `configure_pathfinding()` không."""
         return 0 <= c < cls._pf_cols and 0 <= r < cls._pf_rows
 
     @classmethod
     def _pf_blocked_cell(cls, c: int, r: int) -> bool:
+        """Ô lưới (c,r) có bị tường chặn không (tra tập `_pf_blocked` đã raster hoá)."""
         return (c, r) in cls._pf_blocked
 
     @classmethod
@@ -660,6 +688,12 @@ class WorldQuery:
                 (goal[0] * cell + cell / 2.0, goal[1] * cell + cell / 2.0)]
 
         def h(a, b):
+            """Heuristic A* — khoảng cách OCTILE giữa 2 ô lưới (cho phép đi
+            chéo): bằng Manhattan (`dc+dr`) trừ bù phần "tiết kiệm" khi đi
+            chéo thay vì răng cưa (`(sqrt(2)-2) * min(dc,dr)`, hệ số âm vì
+            sqrt(2)≈1.414 < 2). Chính xác hơn Manhattan thuần cho lưới
+            8-hướng, admissible (không bao giờ đánh giá CAO HƠN chi phí
+            thật) nên A* vẫn đảm bảo tìm đường ngắn nhất."""
             dc = abs(a[0] - b[0]); dr = abs(a[1] - b[1])
             return (dc + dr) + (math.sqrt(2) - 2) * min(dc, dr)
 

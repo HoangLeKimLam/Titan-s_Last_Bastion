@@ -142,7 +142,7 @@ class ISkillUser(ABC):
     Hợp đồng: "Tôi có thể dùng skill và có cooldown."
 
     Ai implement:
-        Commander (Eren, Mikasa, Levi, Armin, Hange)
+        Commander (Mikasa, Eren, Levi, Hange)
 
     Ai GỌI:
         - PlayerInputHandler → commander.use_skill('Q') khi người chơi bấm Q
