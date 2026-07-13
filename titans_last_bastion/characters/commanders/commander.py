@@ -609,12 +609,22 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
     # --- Basic attack (LMB) -----------------------------------------------
 
     def _attack_recovery_gate(self) -> float:
-        """Thời gian (giây, tính từ lúc `_combo_anim_left` = `_combo_anim_total`)
-        cần chờ trước khi 1 click mới được TÍNH — dùng chung bởi `basic_attack()`
-        (chặn click hụt) và `_draw_recovery_bar()` (thanh trắng cảnh báo), để
-        không lặp công thức 2 nơi. Tốc đánh tăng theo cấp → gate ngắn lại."""
+        """Ngưỡng thời gian (giây) của `_combo_anim_left` để cho phép click nhịp tiếp theo.
+        Tốc đánh tăng theo cấp -> Thời gian chờ giảm -> Ngưỡng này TĂNG LÊN.
+        Dùng chung bởi `basic_attack()` và `_draw_recovery_bar()`."""
         atk_speed_mult = 1.0 + (self._level - 1) * self.ATTACK_SPEED_PCT_PER_LEVEL
-        return (self._combo_anim_total * self.COMBO_CANCEL_THRESHOLD) / atk_speed_mult
+        
+        # Mốc gate cơ bản (khi tốc đánh x1.0)
+        base_gate = self._combo_anim_total * self.COMBO_CANCEL_THRESHOLD
+        
+        # Thời gian bị khóa thao tác (chờ) ở mức cơ bản
+        base_wait_time = self._combo_anim_total - base_gate
+        
+        # Thời gian chờ thực tế (tốc đánh càng cao -> chờ càng ít)
+        actual_wait_time = base_wait_time / atk_speed_mult
+        
+        # Trả về mốc gate mới (Gate cao lên -> đếm lùi chạm mốc nhanh hơn)
+        return self._combo_anim_total - actual_wait_time
 
     def _draw_recovery_bar(self, screen, bar_x: int, bar_y: int, bar_w: int) -> None:
         """Thanh mảnh màu trắng cảnh báo đang "gồng đòn" (chưa click lại được).
@@ -691,8 +701,9 @@ class Commander(Entity, IAttackable, IMovable, ISkillUser, IUpgradable):
             self._titan_stack_timer = self.TITAN_STACK_RESET_WINDOW
 
         duration = self._animator.clip_duration(state)
-        self._combo_anim_total = duration
-        self._combo_anim_left = duration
+        # Cộng thêm 0.3s độ trễ (khựng) hậu vung kiếm
+        self._combo_anim_total = duration + 0.3
+        self._combo_anim_left = duration + 0.3
         self._combo_reset_left = self.COMBO_RESET_WINDOW
         self._combo_step = (step + 1) % len(self.BASIC_ATTACK_DAMAGES)
 

@@ -63,12 +63,27 @@ SPD_MIN, SPD_MAX = 160.0, 340.0       # tốc kim (độ/giây) — khó → nha
 # Thông báo gặp titan.
 ALERT_TIME: float = 10.0              # hết giờ → auto rút bỏ đồ
 
-# Item ngẫu nhiên. Chỉ dùng field có sẵn icon ở core/resource/*.png (không có
-# icon cho "anti_stun" trong bộ asset hiện tại — tránh dùng để UI luôn có hình).
+# Item Cache ngẫu nhiên — 5 bậc độ hiếm (trọng số càng cao càng dễ ra):
+#   Cao        : ore
+#   Vừa        : acid_ore, wind_ore
+#   Hơi hiếm   : ice_ore, water_ore, electric_ore
+#   Hiếm       : anti_armor_ore, anti_stun
+#   Siêu hiếm  : serum
 ITEM_SPAWN_INTERVAL: float = 20.0
 MAX_ITEMS: int = 3
-ITEM_RESOURCES: tuple = ("water_ore", "electric_ore", "acid_ore", "wind_ore",
-                         "titan_pheromone", "serum")
+ITEM_LIFETIME: float = 180.0          # 3 phút — node item chưa từng thám hiểm tự biến mất sau chừng này
+ITEM_RESOURCE_WEIGHTS: dict = {
+    "ore":             100,
+    "acid_ore":         50,
+    "wind_ore":         50,
+    "ice_ore":          20,
+    "water_ore":        20,
+    "electric_ore":     20,
+    "anti_armor_ore":    8,
+    "anti_stun":         8,
+    "serum":             2,
+}
+ITEM_RESOURCES: tuple = tuple(ITEM_RESOURCE_WEIGHTS.keys())
 
 # Trạng thái party.
 STATE_LOOTING = "looting"
@@ -158,12 +173,16 @@ class ExpeditionZone:
     resource_type: str      # field hợp lệ của ResourceBundle
     base_loot_rate: float   # đơn vị/giây ở mốc SOLDIER_REF lính
     kind: str = "field"     # "field" | "item"
+    age: float = 0.0        # giây đã tồn tại — CHỈ tính khi node item chưa
+                            # từng được gửi đội tới (xem `ever_dispatched`)
+    ever_dispatched: bool = False   # đã từng có đội thám hiểm gửi tới node này chưa
 
     @property
     def is_item(self) -> bool:
         """True nếu node này là "Item Cache" tạm thời (spawn ngẫu nhiên bởi
-        `DispatchManager._spawn_item()`, có thể hết hạn/bị dọn), khác node
-        tài nguyên CỐ ĐỊNH tạo bởi `seed_default_zones()` (`kind='field'`)."""
+        `DispatchManager._spawn_item()`, tự hết hạn theo `ITEM_LIFETIME` hoặc
+        biến mất ngay sau khi đội thám hiểm rời đi — xem `DispatchManager._expire_items`),
+        khác node tài nguyên CỐ ĐỊNH tạo bởi `seed_default_zones()` (`kind='field'`)."""
         return self.kind == "item"
 
 
@@ -380,16 +399,19 @@ class DispatchManager:
 
     # --- Setup ----------------------------------------------------------
     def seed_default_zones(self) -> None:
-        """6 node cố định quanh vành đai — xa dần thì tài nguyên quý dần.
-        Mọi node đều cách tâm >= MIN_DISTANCE."""
+        """6 node cố định quanh vành đai, CHỈ gồm gỗ/đá rải rác đều 8 hướng
+        (tài nguyên cơ bản, luôn sẵn có ngay từ đầu) — mọi tài nguyên khác
+        (quặng, item đặc biệt) chỉ xuất hiện qua Item Cache ngẫu nhiên
+        (`_spawn_item`), không có mặt trong bộ node cố định này. Mọi node
+        đều cách tâm >= MIN_DISTANCE."""
         specs = [
             # (name, angle_deg, distance, resource_type, base_loot_rate)
-            ("Near Forest",  20.0, 360.0, "wood",     6.0),
-            ("Stone Quarry", 80.0, 390.0, "stone",    5.0),
-            ("Ice Cavern",  150.0, 400.0, "ice_ore",  3.0),
-            ("Ore Vein",    210.0, 460.0, "ore",      2.5),
-            ("Lava Field",  280.0, 540.0, "fire_ore", 1.6),
-            ("Serum Marsh", 340.0, 610.0, "serum",    1.0),
+            ("Near Forest",   20.0, 370.0, "wood",  6.0),
+            ("Stone Quarry",  80.0, 390.0, "stone", 5.0),
+            ("Old Grove",    140.0, 420.0, "wood",  5.5),
+            ("Rock Outcrop", 200.0, 450.0, "stone", 5.0),
+            ("Timber Camp",  260.0, 480.0, "wood",  5.0),
+            ("Granite Ridge",320.0, 510.0, "stone", 4.5),
         ]
         self.zones = [
             ExpeditionZone(n, math.radians(a), d, rt, br)
@@ -436,7 +458,12 @@ class DispatchManager:
 
     def dispatch(self, zone: ExpeditionZone,
                  soldiers: dict) -> Optional[ExpeditionParty]:
-        """Gửi 1 đội tới `zone`. Trừ lính khỏi kho trại. None nếu không hợp lệ."""
+        """Gửi 1 đội tới `zone`. Trừ lính khỏi kho trại. None nếu không hợp lệ.
+
+        Nếu `zone` là Item Cache (`is_item`), đánh dấu `ever_dispatched=True`
+        NGAY LÚC GỬI — mốc này khiến node bị `_expire_items()` xoá VĨNH VIỄN
+        ngay khi đội cuối cùng rời khỏi nó (thắng/thua/rút lui đều tính),
+        bất kể tuổi node đã bao lâu."""
         if zone not in self.zones:
             return None
         if not self.can_dispatch(soldiers):
@@ -445,6 +472,8 @@ class DispatchManager:
             n = int(soldiers.get(k, 0))
             if n > 0:
                 self.barracks.take_idle(k, n)
+        if zone.is_item:
+            zone.ever_dispatched = True
         party = ExpeditionParty(zone, soldiers)
         self.parties.append(party)
         return party
@@ -573,26 +602,67 @@ class DispatchManager:
                 party.state = STATE_ENCOUNTER
                 self.encounter_queue.append(TitanEncounter(party))
 
+    def _zone_has_party(self, zone: ExpeditionZone) -> bool:
+        """True nếu đang có ÍT NHẤT 1 đội (party) đang thám hiểm tại `zone`."""
+        return any(p.zone is zone for p in self.parties)
+
+    def _expire_items(self, dt: float) -> None:
+        """Dọn Item Cache theo 2 luật, xét TỪNG node MỖI FRAME:
+
+        1. Node ĐANG có đội thám hiểm (`_zone_has_party`) → giữ nguyên, KHÔNG
+           tính tuổi, KHÔNG xoá — node vẫn giữ NGUYÊN VẸN mọi chức năng (đội
+           vẫn loot/gặp titan bình thường) dù đã quá `ITEM_LIFETIME`.
+        2. Node KHÔNG có đội:
+           a. `ever_dispatched=True` (đã TỪNG được gửi đội, giờ đội cuối cùng
+              vừa rời đi — thắng/thua/rút lui đều tính) → xoá NGAY LẬP TỨC,
+              bất kể tuổi node là bao nhiêu.
+           b. `ever_dispatched=False` (chưa từng được dùng) → cộng dồn `age`;
+              đạt `ITEM_LIFETIME` (3 phút) → xoá do hết hạn tự nhiên.
+        """
+        for z in list(self.zones):
+            if not z.is_item:
+                continue
+            if self._zone_has_party(z):
+                continue
+            if z.ever_dispatched:
+                self.zones.remove(z)
+                continue
+            z.age += dt
+            if z.age >= ITEM_LIFETIME:
+                self.zones.remove(z)
+
     def _tick_items(self, dt: float) -> None:
-        """Cứ mỗi `ITEM_SPAWN_INTERVAL` giây, nếu số Item Cache hiện có CHƯA
-        đạt `MAX_ITEMS`, spawn thêm 1 node item mới (`_spawn_item`) — tạo
-        cảm giác "cơ hội mới xuất hiện theo thời gian" trên bản đồ thám hiểm."""
+        """Dọn Item Cache hết hạn (`_expire_items`), rồi cứ mỗi
+        `ITEM_SPAWN_INTERVAL` giây, nếu số Item Cache ĐANG TÍNH VÀO giới hạn
+        CHƯA đạt `MAX_ITEMS`, spawn thêm 1 node mới (`_spawn_item`).
+
+        Node đang có đội thám hiểm (`_zone_has_party`) KHÔNG được tính vào
+        giới hạn `MAX_ITEMS` — "trừ sẵn" khỏi tổng ngay khi có đội tới, dù
+        node đó vẫn tồn tại và hoạt động bình thường. Nhờ vậy 1 node đang
+        được khai thác không chiếm mất suất, luôn có thể spawn node mới thay thế.
+        """
         self._item_timer += dt
+        self._expire_items(dt)
         if self._item_timer >= ITEM_SPAWN_INTERVAL:
             self._item_timer -= ITEM_SPAWN_INTERVAL
-            if sum(1 for z in self.zones if z.is_item) < MAX_ITEMS:
+            _countable = sum(1 for z in self.zones
+                             if z.is_item and not self._zone_has_party(z))
+            if _countable < MAX_ITEMS:
                 self._spawn_item()
 
     def _spawn_item(self) -> ExpeditionZone:
         """Tạo 1 node "Item Cache" tại vị trí NGẪU NHIÊN (góc đều, khoảng
-        cách trong dải `[MIN_DISTANCE, MAX_DISTANCE]`), loại tài nguyên
-        ngẫu nhiên trong `ITEM_RESOURCES` (khác `seed_default_zones` — node
-        cố định theo tài nguyên/khoảng cách THIẾT KẾ), rate loot ngẫu nhiên
-        1.5-3.0. Thêm vào `zones`, trả về node vừa tạo."""
+        cách trong dải `[MIN_DISTANCE, MAX_DISTANCE]`), loại tài nguyên rút
+        thăm CÓ TRỌNG SỐ theo `ITEM_RESOURCE_WEIGHTS` (5 bậc độ hiếm — ore
+        dễ ra nhất, serum khó ra nhất; khác `seed_default_zones` — node cố
+        định theo tài nguyên/khoảng cách THIẾT KẾ, không rút thăm), rate
+        loot ngẫu nhiên 1.5-3.0. Thêm vào `zones`, trả về node vừa tạo."""
         self._item_counter += 1
         ang = self._rng.uniform(0.0, 2 * math.pi)
         dist = self._rng.uniform(MIN_DISTANCE, MAX_DISTANCE)
-        rt = self._rng.choice(ITEM_RESOURCES)
+        rt = self._rng.choices(
+            list(ITEM_RESOURCE_WEIGHTS.keys()),
+            weights=list(ITEM_RESOURCE_WEIGHTS.values()), k=1)[0]
         rate = self._rng.uniform(1.5, 3.0)
         z = ExpeditionZone(f"Item Cache {self._item_counter}", ang, dist, rt,
                            rate, kind="item")

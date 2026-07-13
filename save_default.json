@@ -3585,7 +3585,10 @@
       "type": "Farm",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 2976,
@@ -3593,7 +3596,10 @@
       "type": "Farm",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 2208,
@@ -3601,7 +3607,10 @@
       "type": "WoodWorkshop",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 2176,
@@ -3609,7 +3618,10 @@
       "type": "WoodWorkshop",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 2304,
@@ -3617,7 +3629,10 @@
       "type": "WoodWorkshop",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 3072,
@@ -3625,7 +3640,10 @@
       "type": "Forge",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 3136,
@@ -3633,7 +3651,10 @@
       "type": "Forge",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 3136,
@@ -3641,7 +3662,10 @@
       "type": "Forge",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 2208,
@@ -3649,7 +3673,10 @@
       "type": "StoneWorkshop",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 2176,
@@ -3657,7 +3684,10 @@
       "type": "StoneWorkshop",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 2272,
@@ -3665,7 +3695,10 @@
       "type": "StoneWorkshop",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     },
     {
       "x": 2368,
@@ -3673,7 +3706,10 @@
       "type": "TrainingCamp",
       "hp": 300,
       "level": 1,
-      "alive": true
+      "alive": true,
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
     }
   ],
   "towers": [],

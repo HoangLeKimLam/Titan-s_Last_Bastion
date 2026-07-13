@@ -14,7 +14,7 @@ Render order:s
   Pass 2 – Y-sort thống nhất: wall_h (0) < corner_up (1) < objects/wall_Y (2)
   Pass 3 – corner_down luôn render sau cùng
 
-Điều khiển: WASD / ← → ↑ ↓  cuộn camera    F1  debug boxes    ESC / Q  thoát
+Điều khiển: WASD / ← → ↑ ↓  cuộn camera    ESC / Q  thoát
 """
 import sys, os, random, types
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'titans_last_bastion'))
@@ -907,9 +907,8 @@ class BuildingRegistry:
         tra MỌI ô trong footprint phải đồng thời: (1) trong vùng cho phép
         (`_in_zone`, biên map cho bẫy, biên Maria cho tower/building), (2)
         chưa bị công trình khác chiếm (`_occupied`), (3) không nằm trong
-        `_blocked` (tường/vật cản) — TRỪ KHI `is_trap=True` (bẫy được phép
-        đặt chồng lên vùng blocked, vì bẫy nằm sát đất không cản đường đi
-        như building/tower). Sai 1 ô là fail cả khối."""
+        `_blocked` (tường/vật cản/vật thể trang trí) — áp dụng cho MỌI loại
+        công trình, kể cả bẫy. Sai 1 ô là fail cả khối."""
         for dr in range(th):
             for dc in range(tw):
                 tc, tr = col + dc, row + dr
@@ -917,7 +916,7 @@ class BuildingRegistry:
                     return False
                 if (tc, tr) in self._occupied:
                     return False
-                if not is_trap and (tc, tr) in self._blocked:
+                if (tc, tr) in self._blocked:
                     return False
         return True
 
@@ -1569,7 +1568,6 @@ def main(initial_choice=None):
     _chop_no_rect     = None
     upgrade_btn_rect  = None   # set each frame by upgrade panel render
     skill_btn_rect    = None   # set each frame for special skills like SurikenTrap Wind Breath
-    _history: list    = []     # undo stack: each entry = ('object'|'building', data)
 
     # Titan test state (phím K)
     _wqview   = WorldQueryView()
@@ -1656,6 +1654,11 @@ def main(initial_choice=None):
             # tác dụng sau Continue" dù _level hiển thị đúng số.
             _fast_forward_level(_nb, int(entry.get('level', 1)))
             _nb.is_alive = bool(entry.get('alive', True)) and _nb._hp > 0
+            # Khôi phục 3 item vĩnh viễn (anti_stun/serum/anti_armor_ore) —
+            # chỉ có tác dụng nếu _nb là Tower (hasattr guard).
+            for _flag in ('_stun_immune', '_serum_buff', '_anti_armor_buff'):
+                if hasattr(_nb, _flag):
+                    setattr(_nb, _flag, bool(entry.get(_flag[1:], False)))
             _col, _row = entry['x'] // T, entry['y'] // T
             registry.register_existing(_col, _row, _btw, _bth, _nb)
             buildings.append(_nb)
@@ -1707,6 +1710,10 @@ def main(initial_choice=None):
             if entry.get('wave_order') and hasattr(_nb, 'wave_order'):
                 _nb.wave_order = list(entry['wave_order'])
             _nb.is_alive = bool(entry.get('alive', True)) and _nb._hp > 0
+            # Khôi phục 3 item vĩnh viễn (anti_stun/serum/anti_armor_ore).
+            for _flag in ('_stun_immune', '_serum_buff', '_anti_armor_buff'):
+                if hasattr(_nb, _flag):
+                    setattr(_nb, _flag, bool(entry.get(_flag[1:], False)))
             # Công thức GỐC y hệt lúc đặt tháp lần đầu (đảm bảo tường bên cạnh
             # không bị tháp mới che đè sai chỗ).
             _hidden = {id(_ws)}
@@ -2002,20 +2009,11 @@ def main(initial_choice=None):
     _prev_build_type = None   # detect build_type changes to recreate ghost
 
     BG    = (22, 26, 18)
-    debug = False
     PAD   = 300
 
     _YPRI = {'wall_h': 0,
              'corner_ul': 1, 'corner_ur': 1, 'corner_dl': 1, 'corner_dr': 1,
              'wall_Y': 2}
-    _DBG_COLOR = {
-        'wall_h':    (255,  80,  80),
-        'wall_Y':    ( 80, 180, 255),
-        'corner_ul': (180,  80, 255),
-        'corner_ur': ( 80, 255,  80),
-        'corner_dl': (255, 150,   0),
-        'corner_dr': (  0, 255, 220),
-    }
 
     # ── Đăng ký decoration ban đầu làm ODM anchor (tree, stair, arch) ──────────
     _ODM_ANCHOR_KINDS = {'tree', 'stair_l', 'arch'}
@@ -2514,45 +2512,9 @@ def main(initial_choice=None):
                                     _e_aim_active = True
                     elif event.key == pygame.K_r:
                         active_commander.use_skill('R')
-                if event.key == pygame.K_F1:
-                    debug = not debug
                 if not commander_mode and sm.is_combat:
                     if event.key == pygame.K_k:
                         _spawn_panel = not _spawn_panel
-                if event.key == pygame.K_z and (pygame.key.get_mods() & pygame.KMOD_CTRL):
-                    if _history:
-                        _htype, _hdata = _history.pop()
-                        if _htype == 'object':
-                            _htc, _htr, _hkind, _hvar, _htw, _hth, _htc_fp, _htr_fp = _hdata
-                            _obj_entry = (_htc, _htr, _hkind, _hvar)
-                            if _obj_entry in OBJECTS:
-                                OBJECTS.remove(_obj_entry)
-                            for _dc in range(_htw):
-                                for _dr in range(_hth):
-                                    registry._occupied.discard((_htc_fp + _dc, _htr_fp + _dr))
-                            registry._blocked = _build_blocked_tiles(sprites, castle_surf)
-                            WorldQuery.remove_static_anchor((_htc, _htr, _hkind))
-                        elif _htype == 'building':
-                            _hcol, _hrow, _htw, _hth, _hbldg = _hdata
-                            _bld_entry = (_hcol, _hrow, _htw, _hth, _hbldg)
-                            if _bld_entry in registry._placed:
-                                registry._placed.remove(_bld_entry)
-                            if _hbldg in buildings:
-                                buildings.remove(_hbldg)
-                            for _dr in range(_hth):
-                                for _dc in range(_htw):
-                                    registry._occupied.discard((_hcol + _dc, _hrow + _dr))
-                            if isinstance(_hbldg, Tower):
-                                WorldQuery.remove_static_anchor(id(_hbldg))
-                        elif _htype == 'wall_tower':
-                            _hws2, _hwt2, *_ = _hdata
-                            wall_towers[:] = [t for t in wall_towers
-                                              if t[0] is not _hws2 or t[1] is not _hwt2]
-                        status_msg   = 'Undo!'
-                        status_timer = 1.5
-                    else:
-                        status_msg   = 'Nothing to undo!'
-                        status_timer = 1.0
             if event.type == pygame.KEYUP:
                 if commander_mode and active_commander:
                     if event.key == pygame.K_e and _e_aim_active:
@@ -3555,7 +3517,6 @@ def main(initial_choice=None):
                                             wall_towers.append((_pl_snap_ws, _nb, _pl_hidden_ids, _pl_blocked_ids))
                                             WorldQuery.spawn_entity(_nb)
                                             WorldQuery.register_structure(pygame.Rect(int(_pl_snap_ws.x), int(_pl_snap_ws.y), TILE, TILE))
-                                            _history.append(('wall_tower', (_pl_snap_ws, _nb, _pl_hidden_ids, _pl_blocked_ids)))
                                             res.spend(_bd['cost'])
                                             status_msg   = f"{_bd['label']} placed on wall!"
                                             status_timer = 2.5
@@ -3610,7 +3571,6 @@ def main(initial_choice=None):
                                             if isinstance(_nb, Forge):
                                                 # Xây thêm trong game → CHỈ cộng vũ khí chung (THÊM MỚI)
                                                 _nb._add_build_limits()
-                                            _history.append(('building', (_tc, _tr, _bd['tw'], _bd['th'], _nb)))
                                             res.spend(_bd['cost'])
                                             status_msg   = f"{_bd['label']} placed!"
                                             status_timer = 2.5
@@ -3652,7 +3612,6 @@ def main(initial_choice=None):
                                         else:
                                             _nb = _bd['cls'](_tc * TILE, _tr * TILE)
                                         WorldQuery.spawn_entity(_nb)
-                                        _history.append(('trap', (_tc, _tr, getattr(_nb, 'tw', _tw_trap), getattr(_nb, 'th', _th_trap), _nb)))
                                         registry.place(_tc, _tr, getattr(_nb, 'tw', _tw_trap), getattr(_nb, 'th', _th_trap), _nb, is_trap=True)
                                         res.spend(_bd['cost'])
                                         status_msg = f"{_bd['label']} placed!"
@@ -3689,7 +3648,6 @@ def main(initial_choice=None):
                                         for _dc in range(_bd['tw']):
                                             for _dr in range(_bd['th']):
                                                 registry._occupied.add((_tc_fp + _dc, _tr_fp + _dr))
-                                        _history.append(('object', (_tc, _tr, _bd['kind'], 0, _bd['tw'], _bd['th'], _tc_fp, _tr_fp)))
                                         registry._blocked = _build_blocked_tiles(sprites, castle_surf)
                                         if _bd['kind'] in _ODM_ANCHOR_KINDS:
                                             WorldQuery.register_static_anchor(
@@ -3710,7 +3668,6 @@ def main(initial_choice=None):
                                         elif isinstance(_nb, Farm):
                                             # Farm mới → food_production tăng → kéo lính "thiếu" về idle
                                             reconcile_soldiers()
-                                        _history.append(('building', (_tc, _tr, _bd['tw'], _bd['th'], _nb)))
                                     res.spend(_bd['cost'])
                                     status_msg   = f"{_bd['label']} placed!"
                                     status_timer = 2.5
@@ -5811,62 +5768,6 @@ def main(initial_choice=None):
                 pygame.draw.rect(screen, (190, 150, 90),
                                  (_sb_track.x, _sb_y, _sb_track.w, _sb_h), border_radius=3)
 
-        # Pass 4 — debug bounding boxes (F1 to toggle)
-        if debug:
-            for s in vis_sections:
-                surf = get_wall_surf(s.section_type)
-                if surf:
-                    sx  = int(s.x) - cam_x
-                    sy  = int(s.y) - cam_y
-                    col = _DBG_COLOR.get(s.section_type, (255, 255, 255))
-                    pygame.draw.rect(screen, col,
-                                     (sx, sy, surf.get_width(), surf.get_height()), 1)
-
-            # Titan debug: visual range + gap detection + state
-            for _tai in titan_ais:
-                _t = _tai.titan
-                if not getattr(_t, 'is_alive', False):
-                    continue
-                _tsx = int(_t.x) - cam_x
-                _tsy = int(_t.y) - cam_y
-                _vr  = int(getattr(_t, 'VISUAL_RANGE', 250.0))
-
-                # Vòng tròn tầm nhìn (vàng) — giới hạn find_wall_gap
-                pygame.draw.circle(screen, (255, 220, 0), (_tsx, _tsy), _vr, 1)
-                # Thân titan (trắng, radius=24)
-                pygame.draw.circle(screen, (255, 255, 255), (_tsx, _tsy), 24, 1)
-
-                # Kiểm tra lỗ hổng trong tầm nhìn hiện tại
-                _gap = WorldQuery.find_wall_gap(
-                    _t.x, _t.y,
-                    getattr(_tai, 'target', None) and getattr(_tai.target, 'x', _t.x) or _t.x,
-                    getattr(_tai, 'target', None) and getattr(_tai.target, 'y', _t.y) or _t.y,
-                    float(_vr)
-                )
-                if _gap is not None:
-                    _gnx, _gny = WorldQuery.find_gap_span_center(_gap[0], _gap[1])
-                    _gsx, _gsy = int(_gnx) - cam_x, int(_gny) - cam_y
-                    # Dấu thập xanh lá = span center titan sẽ nhắm đến
-                    pygame.draw.line(screen, (0, 255, 80), (_gsx - 8, _gsy), (_gsx + 8, _gsy), 2)
-                    pygame.draw.line(screen, (0, 255, 80), (_gsx, _gsy - 8), (_gsx, _gsy + 8), 2)
-                    # Đường kẻ từ titan → span center
-                    pygame.draw.line(screen, (0, 200, 60), (_tsx, _tsy), (_gsx, _gsy), 1)
-
-                # Nhãn trạng thái titan
-                _path_blk  = getattr(_t, '_path_blocked', False)
-                _gap_widen = getattr(_t, '_gap_to_widen', None)
-                _t_state   = getattr(_tai, 'state', '?')
-                _last_rsn  = getattr(_tai, 'last_reason', '')
-                _status = (f"{'BLK ' if _path_blk else ''}"
-                           f"{'WDN ' if _gap_widen else ''}"
-                           f"{'GAP ' if _gap is not None else 'NO-GAP '}"
-                           f"{_t_state}")
-                _lbl = font.render(_status, True, (255, 80, 80) if _path_blk else (160, 220, 255))
-                screen.blit(_lbl, (_tsx - _lbl.get_width() // 2, _tsy - 36))
-                if _last_rsn:
-                    _rl = font.render(_last_rsn[:32], True, (200, 160, 80))
-                    screen.blit(_rl, (_tsx - _rl.get_width() // 2, _tsy - 52))
-
         # Ring labels
         for name, (l, t, r, b) in RING_LABELS:
             wx = (l + r) // 2 * TILE
@@ -5877,7 +5778,6 @@ def main(initial_choice=None):
                 screen.blit(lbl, (sx - lbl.get_width() // 2, sy))
 
         # top-left info bar
-        _dbg = "  F1:debug=ON" if debug else "  F1:debug"
         if commander_mode and active_commander:
             _mode_lbl = f"COMMANDER MODE [{active_commander.NAME}]  Tab=MapMode  LMB=Attack  Q/E/R=Skills  ESC=Exit"
             _top = font.render(_mode_lbl, True, (255, 220, 80))
@@ -5976,7 +5876,7 @@ def main(initial_choice=None):
                     screen.blit(_eat_lbl, (_hud_x + _ech.get_width(), _ei_y))
         else:
             _top = font.render(
-                f"FPS:{clock.get_fps():.0f}  WASD camera  BUILD btn=shop  BAG btn=inventory  ESC/RMB=cancel{_dbg}",
+                f"FPS:{clock.get_fps():.0f}  WASD camera  BUILD btn=shop  BAG btn=inventory  ESC/RMB=cancel",
                 True, (160, 200, 160))
             screen.blit(_top, (8, 8))
 

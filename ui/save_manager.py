@@ -123,6 +123,12 @@ def save_game(res, all_sections, buildings, wall_towers, cmdr_saved_stats,
                 'hp': int(getattr(b, '_hp', 0)),
                 'level': int(getattr(b, '_level', 1)),
                 'alive': bool(getattr(b, 'is_alive', True)),
+                # 3 item vĩnh viễn áp lên Tower (anti_stun/serum/anti_armor_ore) —
+                # chỉ Tower đặt đất mới có 3 thuộc tính này, building thường
+                # (Farm/Forge/...) luôn False do getattr fallback.
+                'stun_immune':     bool(getattr(b, '_stun_immune', False)),
+                'serum_buff':      bool(getattr(b, '_serum_buff', False)),
+                'anti_armor_buff': bool(getattr(b, '_anti_armor_buff', False)),
             }
             for b in buildings
         ],
@@ -142,6 +148,10 @@ def save_game(res, all_sections, buildings, wall_towers, cmdr_saved_stats,
                 'garrison': dict(getattr(tw, 'garrison', {})),
                 'wave_order': list(getattr(tw, 'wave_order', [])),
                 'alive': bool(getattr(tw, 'is_alive', True)),
+                # 3 item vĩnh viễn áp lên Tower — xem ghi chú ở 'buildings' phía trên.
+                'stun_immune':     bool(getattr(tw, '_stun_immune', False)),
+                'serum_buff':      bool(getattr(tw, '_serum_buff', False)),
+                'anti_armor_buff': bool(getattr(tw, '_anti_armor_buff', False)),
             }
             for (ws, tw, _hidden, _blocked) in wall_towers
         ],
@@ -247,6 +257,12 @@ def apply_save(data, res, all_sections, buildings, wall_towers, cmdr_saved_stats
         b._hp = int(entry.get('hp', getattr(b, '_hp', 0)))
         _fast_forward_level(b, int(entry.get('level', 1)))
         b.is_alive = bool(entry.get('alive', True)) and b._hp > 0
+        # Khôi phục 3 item vĩnh viễn (anti_stun/serum/anti_armor_ore) — chỉ
+        # có tác dụng nếu `b` thật sự là Tower (hasattr guard, building
+        # thường không có 3 thuộc tính này nên bị bỏ qua an toàn).
+        for _flag in ('_stun_immune', '_serum_buff', '_anti_armor_buff'):
+            if hasattr(b, _flag):
+                setattr(b, _flag, bool(entry.get(_flag[1:], False)))
 
     # ── Sổ lính (idle / đói / thiếu vũ khí) ───────────────────────────────────
     # Các trại dùng CHUNG một sổ, nên save lưu TỔNG. Khi khôi phục, dồn hết vào
