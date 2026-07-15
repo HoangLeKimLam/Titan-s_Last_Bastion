@@ -257,6 +257,15 @@ class Tower(Entity, IAttackable, IUpgradable):
           4. Đủ → trừ tài nguyên, gọi `_on_orb_applied()` (class con override để
              tăng đúng stat của loại tháp đó) rồi `_check_levelup()`.
 
+        SỬA LỖI: `amount` ở đây là GIÁ TIỀN mỗi lần bấm (balance.TOWER_ORB_COST,
+        vd 5 ore/click) — KHÔNG phải số đơn vị tiến trình damage. Trước đây
+        `_on_orb_applied(amount)` nhân thẳng `amount` này vào damage
+        (`DMG_PER_ORB × amount`), nên khi TOWER_ORB_COST tăng lên 5, damage
+        cũng vọt lên gấp 5 MỖI CLICK → tháp lên full cấp chỉ sau 1 lần bấm
+        (đáng lẽ cần nhiều lần, tăng dần). Tách 2 khái niệm: `amount` VẪN
+        dùng để trừ đúng giá tiền (`cost`), nhưng tiến trình damage LUÔN cố
+        định +1 đơn vị mỗi lần bấm thành công — không phụ thuộc giá đắt/rẻ.
+
         Trả về: bool — True = nạp thành công.
         """
         if not self.can_apply_orb():
@@ -268,7 +277,7 @@ class Tower(Entity, IAttackable, IUpgradable):
         if not rm.can_afford(cost):
             return False
         rm.spend(cost)
-        self._on_orb_applied(amount)
+        self._on_orb_applied(1)
         self._check_levelup()
         return True
 
@@ -1035,7 +1044,13 @@ class BasicTower(Tower):
             if not rm.can_afford(cost):
                 return False
             rm.spend(cost)
-            self._damage += self.DMG_PER_ORB * amount
+            # SỬA LỖI: `amount` là GIÁ TIỀN mỗi click (TOWER_ORB_COST, vd 5
+            # ore), không phải số đơn vị tiến trình — trước đây nhân thẳng
+            # vào damage khiến 1 click vượt LV2_DMG_THRESHOLD (60) ngay lập
+            # tức (250 >= 60), sẵn sàng nhảy Giai đoạn 2 chỉ sau 1 lần bấm.
+            # Tiến trình damage LUÔN cố định +1 đơn vị mỗi lần bấm thành
+            # công, không phụ thuộc giá đắt/rẻ — giống fix ở Tower.apply_orb().
+            self._damage += self.DMG_PER_ORB * 1
             if self._damage >= self.LV2_DMG_THRESHOLD:
                 self._upgrade_ready = True
         else:

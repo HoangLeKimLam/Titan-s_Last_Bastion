@@ -621,7 +621,13 @@ class ElectricField(Entity):
         import math
         r = self._radius
         life_ratio = self._lifetime / self.DURATION
-        alpha = int(life_ratio * 220)
+        # SỬA LỖI: update() trừ _lifetime XUỐNG ÂM rồi mới set is_alive=False
+        # (không kẹp lại 0) — nếu Pass 2.6 vẽ trúng đúng frame vừa chết (trước
+        # khi purge_dead dọn ở frame sau), life_ratio âm -> alpha âm -> pygame
+        # từ chối màu RGBA (255,240,80,alpha) -> "ValueError: invalid color
+        # argument", crash cả game. Kẹp alpha về [0,220] tại gốc — đủ chặn mọi
+        # lớp vẽ bên dưới dùng chung biến này.
+        alpha = max(0, min(220, int(life_ratio * 220)))
         pulse = (math.sin(self._pulse) + 1) / 2  # 0.0 ~ 1.0
 
         size = int(r * 2 + 20)
