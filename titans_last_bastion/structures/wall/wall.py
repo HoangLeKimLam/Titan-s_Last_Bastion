@@ -84,7 +84,9 @@ class WallSection(Entity, IAttackable):
         """
         if not self.is_alive:
             return
-        self._hp -= amount
+        # Kẹp sàn 0 (giống HQ.take_damage) — overkill để HP âm sâu khiến repair()
+        # phải "leo" hết phần âm mới sống lại (đoạn chết khít chỉ cần 1 lần vá).
+        self._hp = max(0, self._hp - amount)
         if self._hp <= 0:
             SoundManager.get_instance().play('wall_collapse_1', self.x, self.y)
             self.is_alive = False
@@ -114,6 +116,11 @@ class WallSection(Entity, IAttackable):
                 try:
                     from systems.world_query import WorldQuery
                     WorldQuery._dead_clusters_dirty = True
+                    # PHẢI vô hiệu luôn cache khung hình: khối tính lại _dead_clusters
+                    # nằm SAU guard `if _cache_valid: return`, nên set mỗi _dead_clusters_dirty
+                    # là no-op cho tới khi cache bị vô hiệu vì lý do khác → titan vẫn
+                    # tưởng còn lỗ ở đoạn vừa vá, dồn vào tường đặc.
+                    WorldQuery._cache_valid = False
                 except ImportError:
                     pass
 

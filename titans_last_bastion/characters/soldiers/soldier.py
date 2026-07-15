@@ -190,11 +190,12 @@ class Soldier(Entity, IAttackable, IMovable):
             allowed = {WorldQuery.zone_of(hx, hy)}
 
         # Mở rộng nếu có lỗ hổng tường trong tầm → cho phép vùng kề (đi qua lỗ).
-        # Dùng snapshot base_allowed để tránh cascade: vùng mới thêm không kéo theo
-        # vùng tiếp theo trong cùng vòng lặp.
-        if WorldQuery.has_dead_wall_near(hx, hy, r, min_sections=1):
+        # Thay vì mở khóa bừa bãi khi có bất kỳ lỗ hổng nào, ta dùng get_dead_wall_zone_pairs_near
+        # để tìm ĐÍCH DANH bức tường nào bị vỡ. Dùng snapshot base_allowed để tránh cascade.
+        dead_zone_pairs = WorldQuery.get_dead_wall_zone_pairs_near(hx, hy, r, min_sections=1)
+        if dead_zone_pairs:
             base_allowed = set(allowed)
-            for inner_z, outer_z in WorldQuery.WALL_ZONE_PAIRS.values():
+            for inner_z, outer_z in dead_zone_pairs:
                 if inner_z in base_allowed or outer_z in base_allowed:
                     allowed.add(inner_z)
                     allowed.add(outer_z)
@@ -249,6 +250,12 @@ class Soldier(Entity, IAttackable, IMovable):
             return
         if dtype == 'antiheal':
             self._can_heal = False   # vĩnh viễn — không tự hồi lại (Wolf)
+        # Đòn tín hiệu thuần (đẩy lùi/pushback với amount<=0) KHÔNG gây damage.
+        # Thiếu nhánh này thì `max(1, ...)` biến mọi tín hiệu 0-damage thành −1 HP,
+        # bào dần lính giòn qua steam Colossal/knockback AoE (tướng dùng max(0,)
+        # nên miễn nhiễm — lính phải khớp).
+        if int(amount) <= 0:
+            return
         dealt = max(1, int(amount) - self.DEFENSE)
         self._hp -= dealt
         if self._hp <= 0:

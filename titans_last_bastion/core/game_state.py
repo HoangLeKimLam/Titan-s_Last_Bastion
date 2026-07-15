@@ -18,8 +18,18 @@ Ai dùng file này:
     - IUpgradable      → get_upgrade_cost() trả về ResourceBundle
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from typing import Any
+
+
+# Field NGUYÊN LIỆU — đúng 14 field mà `ResourceBundle.__mul__` nhân (phạt thua
+# ×0.8); phần còn lại là vũ khí/bẫy/đạn (KHÔNG nhân, KHÔNG mirror sang ResourceState).
+# Dùng chung 1 nguồn cho game.py (ResourceState mirror) và ui/save_manager.py (load).
+MATERIAL_FIELDS = (
+    'wood', 'stone', 'anti_stun', 'food', 'ore', 'serum',
+    'fire_ore', 'ice_ore', 'electric_ore', 'water_ore', 'wind_ore',
+    'acid_ore', 'anti_armor_ore', 'titan_pheromone',
+)
 
 
 # ---------------------------------------------------------------------------
@@ -156,16 +166,16 @@ class ResourceBundle:
             stone              = int(self.stone * factor),
             anti_stun                = int(self.anti_stun   * factor),
             food               = int(self.food  * factor),
-            ore                = self.ore,
-            serum              = self.serum,
-            fire_ore           = self.fire_ore,
-            ice_ore            = self.ice_ore,
-            electric_ore       = self.electric_ore,
-            water_ore          = self.water_ore,
-            wind_ore           = self.wind_ore,
-            acid_ore           = self.acid_ore,
-            anti_armor_ore     = self.anti_armor_ore,
-            titan_pheromone    = self.titan_pheromone,
+            ore                = int(self.ore*factor),
+            serum              = int(self.serum*factor),
+            fire_ore           = int(self.fire_ore*factor),
+            ice_ore            = int(self.ice_ore*factor),
+            electric_ore       = int(self.electric_ore*factor),
+            water_ore          = int(self.water_ore*factor),
+            wind_ore           = int(self.wind_ore*factor),
+            acid_ore           = int(self.acid_ore*factor),
+            anti_armor_ore     = int(self.anti_armor_ore*factor),
+            titan_pheromone    = int(self.titan_pheromone*factor),
             tower_weapon       = self.tower_weapon,
             basic_projectlie   = self.basic_projectlie,
             ice_projectlie     = self.ice_projectlie,
@@ -279,13 +289,14 @@ class ResourceBundle:
         Returns:
             ResourceBundle: Object được khôi phục.
 
-        Hướng dẫn code:
-            return cls(**data)
-
         Dùng khi nào:
             - GameState.load() → bundle = ResourceBundle.from_dict(raw['stock'])
         """
-        return cls(**data)
+        # Lọc theo field hợp lệ trước khi dựng — save.json cũ (đổi tên/bỏ field
+        # qua các phiên) chứa key lạ sẽ làm `cls(**data)` ném TypeError → crash
+        # lúc load. Thiếu key vẫn an toàn nhờ default của dataclass.
+        _valid = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in _valid})
 
 
 # ---------------------------------------------------------------------------

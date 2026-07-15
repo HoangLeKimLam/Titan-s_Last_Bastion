@@ -1787,7 +1787,11 @@ class Kamikaze(Titan):
                 self._anim_timer -= 1.0 / self._IDLE_FPS
                 self._anim_col = (self._anim_col + 1) % self._IDLE_FRAMES
             if self._pause_timer <= 0:
-                self._release_explosion()
+                # Tự nổ (hết đếm ngược) đi qua on_death() y như bị giết → publish
+                # 'titan_died' + rơi loot (on_death tự gọi _release_explosion vì
+                # _has_exploded còn False). Gọi thẳng _release_explosion trước đây
+                # khiến Kamikaze tự sát KHÔNG rơi đồ / không phát event.
+                self.on_death()
             return
 
         if self._is_moving:

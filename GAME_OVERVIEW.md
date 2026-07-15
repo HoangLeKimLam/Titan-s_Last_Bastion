@@ -162,8 +162,6 @@ Tướng được tạo tại `(hq.x + TILE, hq.y)` với **level/XP khôi phụ
 | `Q` / `E` / `R` | Kỹ năng tướng |
 | `ESC` | Thoát chế độ / Pause menu |
 | `K` | Bảng spawn titan thủ công (debug, chỉ combat) |
-| `F1` | Debug boxes |
-| `Ctrl+Z` | Undo đặt công trình |
 
 **Tướng chết:** không thua ngay — `_respawn_timer = 30s`, sau đó có thể respawn
 (bấm TAB). Ở **Vượt Ải** tướng chết bị **trừ 1 cấp**; ở **Thao Trường** thì KHÔNG
@@ -310,6 +308,12 @@ File: `structures/buildings/building.py`
 - Mọi building có **HP = 300**. Titan vào Sina **giẫm đạp** (`check_trampling`) phá được.
 - `is_starter = True` → **BẤT TỬ** (11 building khởi đầu).
 - Nâng cấp qua `_apply_level_bonus()` (tăng `PRODUCTION_RATE` tích luỹ).
+
+**Shop chỉ hiện building/tháp/bẫy** (`_SHOP_BUILDING_ITEMS` lọc từ `BUILDING_DEFS`,
+loại bỏ mọi decoration không phải 3 nhóm này). Chi phí xây mỗi loại lấy từ
+`balance.BUILD_COSTS` — hiện đặt mặc định **0 cho mọi thứ** (xây miễn phí), chỉ
+dùng 3 tài nguyên gỗ/đá/quặng làm trục chi phí, đã sẵn cấu hình tập trung để
+chỉnh số sau này.
 
 **Forge — 2 trục nâng cấp độc lập:**
 1. `upgrade()` — nâng CẤP Xưởng (1→2→3), cộng **slot tổng** (tower_weapon/soldier_weapon/trap).
@@ -531,9 +535,22 @@ File: `systems/dispatch_system.py` + `ui/resource_map_screen.py` + `ui/expeditio
 1. Mở **Bản đồ Thám hiểm** (icon sidebar) → thấy **CĂN CỨ ở tâm** + các **node** xung quanh.
 2. Node càng **XA** → tài nguyên càng **QUÝ** (nhưng càng **NGUY HIỂM**).
    - Mọi node cách tâm ≥ `MIN_DISTANCE = 350` ("khoảng cách tới hạn", vẽ vòng tròn mờ).
-   - 6 node cố định: Near Forest (wood) · Stone Quarry (stone) · Ice Cavern (ice_ore)
-     · Ore Vein (ore) · Lava Field (fire_ore) · **Serum Marsh (serum, xa nhất 610)**
-   - Thêm **"Item Cache"** ngẫu nhiên spawn mỗi 20s (tối đa 3).
+   - **6 node cố định — CHỈ gỗ/đá cơ bản**, rải đều 8 hướng quanh CĂN CỨ, luôn sẵn
+     có ngay từ đầu game (`seed_default_zones`): Near Forest (wood) · Stone Quarry
+     (stone) · Old Grove (wood) · Rock Outcrop (stone) · Timber Camp (wood) ·
+     Granite Ridge (stone). Mọi tài nguyên khác (quặng, item đặc biệt) KHÔNG có
+     trong bộ node cố định — chỉ ra từ Item Cache.
+   - **"Item Cache"** — node ngẫu nhiên, tối đa `MAX_ITEMS = 3` node cùng lúc, spawn
+     thêm mỗi `ITEM_SPAWN_INTERVAL = 20s` nếu số node chưa đủ. Tài nguyên rút thăm
+     **CÓ TRỌNG SỐ** theo 5 bậc hiếm (`ITEM_RESOURCE_WEIGHTS`): `ore` dễ ra nhất
+     (trọng số 100) → `acid_ore`/`wind_ore` vừa (50) → `ice_ore`/`water_ore`/
+     `electric_ore` hơi hiếm (20) → `anti_armor_ore`/`anti_stun` hiếm (8) →
+     `serum` siêu hiếm (2).
+   - **Item Cache tự hết hạn:** node CHƯA từng gửi đội tự biến mất sau
+     `ITEM_LIFETIME = 180s` (3 phút). Node ĐANG có đội thám hiểm thì miễn hết hạn
+     (hoạt động bình thường) và KHÔNG tính vào giới hạn `MAX_ITEMS`. Node đã TỪNG
+     được gửi đội — dù thắng, thua hay bị rút lui — biến mất NGAY khi đội cuối
+     cùng rời đi (không chờ thêm, không hết hạn tự nhiên nữa).
 3. Chọn node → chọn số lính (**bội số 5**) từ 3 loại → **SEND**.
    → Lính bị **TRỪ KHỎI KHO TRẠI** (`TrainingCamp._idle`) ngay lập tức
    → tháp không dùng được lính đang đi thám hiểm.
@@ -626,7 +643,9 @@ File: `ui/save_manager.py`. 2 file: `save.json` (đang chơi) và `save_default.
 **Nội dung save:** `current_level` · `resources` (mọi field ResourceBundle, lấy động
 qua `dataclasses.fields()`) · `commander_stats` (cấp/XP từng tướng) · `wall_sections`
 (HP từng đoạn) · `buildings` (HP + level) · `towers` (loại, HP, **`_damage`** — vì
-`_level` chỉ là chỉ báo dẫn xuất!, garrison, wave_order) · `traps` · `training_idle`
+`_level` chỉ là chỉ báo dẫn xuất!, garrison, wave_order, **3 cờ buff vĩnh viễn**
+`stun_immune`/`serum_buff`/`anti_armor_buff` — lưu cho cả tháp gắn tường lẫn tháp
+đặt đất) · `traps` · `training_idle`
 / `training_hungry` / `training_disarmed` · `hq_hp` · `weapon_stock` / `weapon_used`
 (ResourceBundle thật) · **`chopped_trees`** (toạ độ cây đã chặt).
 
@@ -738,8 +757,6 @@ dọc cạnh **random trong phần GIỮA** tường (né `TT_CORNER_MARGIN = 16
 | `R` | Combat | Skill R (Eren: **HOÁ TITAN**) |
 | `ESC` | Cả 2 | Thoát chế độ hiện tại theo thứ tự ưu tiên → Pause menu |
 | `K` | Combat | Bảng spawn titan thủ công (debug) |
-| `F1` | Cả 2 | Debug boxes |
-| `Ctrl+Z` | Sảnh | Undo đặt công trình |
 | `SPACE` | Sảnh | Bấm trong **minigame PING** (thám hiểm) |
 | Lăn chuột | Sảnh | Zoom map / cuộn shop (khi shop mở) |
 

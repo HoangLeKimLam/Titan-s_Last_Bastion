@@ -36,7 +36,7 @@ chạy CHUNG 1 đường load y hệt Continue.
 import json, os
 from dataclasses import fields as _dc_fields
 
-from core.game_state import ResourceBundle
+from core.game_state import ResourceBundle, MATERIAL_FIELDS
 
 SAVE_PATH = 'save.json'
 DEFAULT_SAVE_PATH = 'save_default.json'
@@ -123,6 +123,13 @@ def save_game(res, all_sections, buildings, wall_towers, cmdr_saved_stats,
                 'hp': int(getattr(b, '_hp', 0)),
                 'level': int(getattr(b, '_level', 1)),
                 'alive': bool(getattr(b, 'is_alive', True)),
+                # Tháp ĐẤT (Tower nằm trong buildings) phải lưu như tháp tường:
+                # _damage là NGUỒN SỰ THẬT của cấp orb (level chỉ là chỉ báo dẫn
+                # xuất), cùng garrison + wave_order. Building thường (Farm/Forge)
+                # → getattr trả default (0/{}/[]) nên vô hại.
+                'damage':     int(getattr(b, '_damage', 0)),
+                'garrison':   dict(getattr(b, 'garrison', {})),
+                'wave_order': list(getattr(b, 'wave_order', [])),
                 # 3 item vĩnh viễn áp lên Tower (anti_stun/serum/anti_armor_ore) —
                 # chỉ Tower đặt đất mới có 3 thuộc tính này, building thường
                 # (Farm/Forge/...) luôn False do getattr fallback.
@@ -263,6 +270,17 @@ def apply_save(data, res, all_sections, buildings, wall_towers, cmdr_saved_stats
         for _flag in ('_stun_immune', '_serum_buff', '_anti_armor_buff'):
             if hasattr(b, _flag):
                 setattr(b, _flag, bool(entry.get(_flag[1:], False)))
+        # Tháp đất khớp vị trí: khôi phục _damage/garrison/wave_order (level qua
+        # _fast_forward_level là no-op với Tower). Dùng hasattr thay isinstance để
+        # module save khỏi phụ thuộc import Tower.
+        if hasattr(b, '_damage') and 'damage' in entry:
+            b._damage = int(entry['damage'])
+        if hasattr(b, 'garrison') and 'garrison' in entry:
+            for _gk, _gv in entry['garrison'].items():
+                if _gk in b.garrison:
+                    b.garrison[_gk] = int(_gv)
+        if hasattr(b, 'wave_order') and entry.get('wave_order'):
+            b.wave_order = list(entry['wave_order'])
 
     # ── Sổ lính (idle / đói / thiếu vũ khí) ───────────────────────────────────
     # Các trại dùng CHUNG một sổ, nên save lưu TỔNG. Khi khôi phục, dồn hết vào
@@ -303,7 +321,14 @@ def apply_save(data, res, all_sections, buildings, wall_towers, cmdr_saved_stats
     # khôi phục từ save như dưới đây.
     _wstock = data.get('weapon_stock')
     if _wstock is not None and resource_manager is not None:
-        resource_manager._stock = ResourceBundle.from_dict(_wstock)
+        # `res` (ResourceState) mirror phần NGUYÊN LIỆU vào `_stock` — đã khôi phục
+        # ở bước 'resources' phía trên. weapon_stock chỉ khôi phục phần VŨ KHÍ: copy
+        # từng field KHÔNG phải nguyên liệu, GIỮ nguyên nguyên liệu (tránh replace cả
+        # `_stock` làm mất nguyên liệu — và an toàn với save CŨ có material=0).
+        _wb = ResourceBundle.from_dict(_wstock)
+        for _f in _dc_fields(resource_manager._stock):
+            if _f.name not in MATERIAL_FIELDS:
+                setattr(resource_manager._stock, _f.name, getattr(_wb, _f.name))
     _wused = data.get('weapon_used')
     if _wused is not None and forge_cls is not None:
         forge_cls._weapon_used = ResourceBundle.from_dict(_wused)

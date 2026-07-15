@@ -278,10 +278,17 @@ class Explosion(TitanAttackStrategy):
 
         # Nổ theo vùng: mọi entity còn sống trong bán kính, damage như nhau,
         # không phân biệt có phải target ban đầu hay không.
+        # Bán kính "vỏ ngoài" của công trình lớn (khớp _get_target_radius ở
+        # ai.py): tháp/HQ 40, tường 42. Kamikaze KÍCH NỔ theo RÌA mục tiêu
+        # (`dist - t_rad <= _EXPLODE_RADIUS`) nên TÂM một công trình to có thể
+        # cách xa hơn `_radius`; cộng vỏ ngoài vào bán kính quét = kiểm CHỒNG LẤN
+        # hai đường tròn (vùng nổ ⊕ thân mục tiêu) → tháp/tường mà Kamikaze nhắm
+        # mới thực sự dính nổ (trước đây đo tâm-đến-tâm nên tháp luôn hụt).
+        _EDGE = {'tower': 40.0, 'hq': 40.0, 'wall': 42.0}
         seen = set()
         for etype in ('soldier', 'commander', 'tower', 'wall'):
             nearby = WorldQuery.find_in_radius(
-                attacker.x, attacker.y, self._radius, etype)
+                attacker.x, attacker.y, self._radius + _EDGE.get(etype, 0.0), etype)
             for e in nearby:
                 if id(e) in seen:
                     continue

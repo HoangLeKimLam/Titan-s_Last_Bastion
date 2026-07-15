@@ -155,8 +155,9 @@ class Tower(Entity, IAttackable, IUpgradable):
         self._garrison_sizes: dict = {t: [_SZ] * self.garrison.get(t, 0)
                                       for t in SOLDIER_TYPES}
 
-        # Wave order: 3 soldier-type slots cycled per event.
-        self.wave_order: list = list(self.DEFAULT_WAVE_ORDER)
+        # Wave order: slots cycled per event, scaling to MAX_WAVES_PER_EVENT.
+        _base = list(self.DEFAULT_WAVE_ORDER)
+        self.wave_order: list = [_base[i % len(_base)] for i in range(self.MAX_WAVES_PER_EVENT)]
 
         # Squad-dispatch state machine: idle → active → cooldown
         self._squad_state : str   = "idle"
@@ -185,8 +186,16 @@ class Tower(Entity, IAttackable, IUpgradable):
     # ── Garrison API (used by TowerMenu / HUD) ────────────────────────
 
     def total_garrison(self) -> int:
-        """Tổng SỐ SQUAD đang chứa (mọi loại lính cộng lại) — so với `CAPACITY`."""
-        return sum(self.garrison.values())
+        """Tổng SỐ SQUAD đang chứa (mọi loại lính cộng lại) — so với `CAPACITY`.
+
+        Cộng cả squad đã chuyển sang `_reserve_squads`/`_deployed_squads` trong
+        combat (lúc `garrison` dict đã bị drain về 0 ở start_combat) — nếu không
+        badge hiện 0/8 dù tháp còn đầy lính và capacity-check bị hụt. 3 nguồn
+        loại trừ nhau theo pha nên KHÔNG đếm trùng: prep chỉ có dict, combat chỉ
+        có reserve + deployed."""
+        return (sum(self.garrison.values())
+                + len(getattr(self, '_reserve_squads', []))
+                + len(getattr(self, '_deployed_squads', [])))
 
     def set_garrison(self, soldier_type: str, count: int) -> bool:
         """Set per-type count. Returns False if new total would exceed CAPACITY."""
@@ -308,6 +317,9 @@ class Tower(Entity, IAttackable, IUpgradable):
         """
         if self._badge_anim:
             self._badge_anim.update(dt)
+        # Hồi máu lính đang NGHỈ TRONG THÁP (reserve) — chạy mỗi frame, kể cả khi
+        # tháp bị choáng (đứng TRƯỚC nhánh stun-return bên dưới).
+        self._heal_reserve_soldiers(dt)
         if self._stun_timer > 0:
             self._stun_timer -= dt
             return
@@ -320,6 +332,24 @@ class Tower(Entity, IAttackable, IUpgradable):
                 WorldQuery.spawn_entity(projectile)
                 self._shoot_timer = self._cooldown
         self._update_squad_dispatch(dt)
+
+    def _heal_reserve_soldiers(self, dt: float) -> None:
+        """Hồi máu lính đang NGHỈ TRONG THÁP (`_reserve_squads`) — chúng đã bị
+        `_absorb_idle_squads` gỡ khỏi map nên `Soldier.update()` KHÔNG còn chạy,
+        nhánh heal IDLE của lính không kích hoạt → nếu không tick ở đây thì lính
+        "về tháp" đứng yên ở HP thấp mãi. Tháp tự tick heal, DÙNG ĐÚNG luật của
+        lính: mỗi `HEAL_TICK` giây hồi `HEAL_RATE`, chỉ khi `hp < max` và
+        `_can_heal` (chưa dính antiheal Wolf). Reserve chỉ tồn tại khi KHÔNG có
+        titan trong tầm (điều kiện absorb) nên hồi ở đây an toàn."""
+        for sq in self._reserve_squads:
+            for m in sq.members:
+                if (getattr(m, 'is_alive', False)
+                        and m._hp < m._max_hp
+                        and getattr(m, '_can_heal', True)):
+                    m._heal_timer += dt
+                    if m._heal_timer >= m.HEAL_TICK:
+                        m._heal_timer = 0.0
+                        m._hp = min(m._max_hp, m._hp + m.HEAL_RATE)
 
     def shoot(self, target: IAttackable) -> BasicProjectile:
         """HOOK — tạo 1 viên đạn BASIC (dtype='normal') nhắm `target`. Mọi class
@@ -529,7 +559,14 @@ class Tower(Entity, IAttackable, IUpgradable):
                 s._state = "COMBAT"
                 s._homeless = True
                 s._transfer_target = None
-                s._zones = zones
+                # Neo "nhà" về ĐÚNG chỗ lính đang đứng (không bám toạ độ tháp đã
+                # sập) → lính mồ côi phát hiện/giữ titan quanh chính nó, kể cả khi
+                # đang transfer dở ở xa tháp. Vùng cho phép = zone gốc của tháp HỢP
+                # thêm zone lính đang đứng, để lính transfer ở vùng khác vẫn đánh
+                # được titan tại chỗ mà KHÔNG mất vùng cũ (lính deployed thường ở
+                # trong zone tháp → union không đổi gì, tránh hồi quy).
+                s._home_pos = (s.x, s.y)
+                s._zones = tuple(set(zones) | {WorldQuery.zone_of(s.x, s.y)})
                 # Không đổi x, y → giữ vị trí đang chiến đấu
 
         self._reserve_squads = []
@@ -840,6 +877,16 @@ class Tower(Entity, IAttackable, IUpgradable):
             return 0
 
         t_radius = getattr(target_tower, 'AGGRO_RADIUS', 600.0)
+        target_cap = getattr(target_tower, 'CAPACITY', 8)
+        open_slots = target_cap - target_tower.total_garrison()
+        
+        if open_slots <= 0:
+            return 0
+            
+        if squads is not None:
+            squads = squads[:open_slots]
+        elif count > 0:
+            count = min(count, open_slots)
 
         def _send(squad) -> None:
             """Đặt squad vào trạng thái MOVING→target và bàn giao cho target."""

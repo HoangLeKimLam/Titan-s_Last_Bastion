@@ -449,7 +449,7 @@ OBJECTS = [
     (86,46,'shrub',0),(58,45,'shrub',0),(51,59,'shrub',0),(72,53,'shrub',0),
     (46,86,'shrub',0),(67,89,'shrub',0),(91,85,'shrub',0),
     # ── centre cluster ──
-    (79,58,'tree',0),(87,59,'tree',0),(100,63,'tree',0),(90,72,'tree',0),(80,73,'tree',0),
+    (87,59,'tree',0),(100,63,'tree',0),(90,72,'tree',0),(80,73,'tree',0),
     (72,64,'shrub',0),(79,68,'shrub',0),(81,63,'shrub',0),(90,66,'shrub',0),
     (83,72,'shrub',0),(91,69,'shrub',0),
     (91,60,'prop_well',0),(100,65,'prop_barrel',0),(98,65,'prop_crate',0),
@@ -514,6 +514,10 @@ def load_layout() -> tuple[list, list]:
 
 
 # ── Resource State ─────────────────────────────────────────────────────────────
+from core.game_state import MATERIAL_FIELDS as _MATERIAL_FIELDS
+_MATERIAL_SET = frozenset(_MATERIAL_FIELDS)
+
+
 class ResourceState:
     """Kho tài nguyên riêng của UI (`game.py`) — SONG SONG với
     `ResourceManager`/`ResourceBundle` (core/game_state.py, dùng bởi hệ
@@ -574,14 +578,14 @@ class ResourceState:
         self.ore               = 80
         self.serum             = 0
         # Khoáng sản đặc biệt (test defaults)
-        self.fire_ore          = 999
-        self.ice_ore           = 999
-        self.electric_ore      = 999
-        self.water_ore         = 999
-        self.wind_ore          = 999
-        self.acid_ore          = 999
-        self.anti_armor_ore    = 999
-        self.titan_pheromone   = 50
+        self.fire_ore          = 0
+        self.ice_ore           = 0
+        self.electric_ore      = 0
+        self.water_ore         = 0
+        self.wind_ore          = 0
+        self.acid_ore          = 0
+        self.anti_armor_ore    = 0
+        self.titan_pheromone   = 0
         # Vũ khí tháp
         self.tower_weapon          = 0
         self.basic_projectlie      = 0
@@ -602,6 +606,18 @@ class ResourceState:
         self.arrow             = 0
         self.poison_arrow      = 0
         self.heavy_arrow       = 0
+
+    def __setattr__(self, name, value):
+        """Ghi field như bình thường; NẾU là field NGUYÊN LIỆU thì mirror ngầm
+        sang `ResourceManager._stock` (2 kho riêng biệt nhưng luôn bằng nhau cho
+        phần nguyên liệu — `ResourceState` như 1 bản chiếu rút ra từ
+        `ResourceManager`). Vũ khí/bẫy KHÔNG mirror (RM quản riêng như cũ).
+        Mọi cách dùng `res.wood`/`res.spend`/`res.earn` giữ nguyên, cầu nối này
+        chạy âm thầm bên dưới."""
+        object.__setattr__(self, name, value)
+        if name in _MATERIAL_SET:
+            from structures.buildings.resource_manager import ResourceManager
+            setattr(ResourceManager.get_instance()._stock, name, value)
 
     def can_afford(self, cost: dict) -> bool:
         """True nếu MỌI field trong `cost` (dict tên→lượng cần) đều có đủ
@@ -1659,6 +1675,21 @@ def main(initial_choice=None):
             for _flag in ('_stun_immune', '_serum_buff', '_anti_armor_buff'):
                 if hasattr(_nb, _flag):
                     setattr(_nb, _flag, bool(entry.get(_flag[1:], False)))
+            # Tháp ĐẤT (Tower): _fast_forward_level là NO-OP (Tower không có
+            # _apply_level_bonus) → khôi phục THẲNG _damage (nguồn sự thật cấp
+            # orb) + _level + garrison + wave_order như tháp tường, nếu không
+            # nâng cấp orb/garrison tháp đất mất sạch sau Continue.
+            if isinstance(_nb, Tower):
+                if hasattr(_nb, '_damage') and 'damage' in entry:
+                    _nb._damage = int(entry['damage'])
+                if hasattr(_nb, '_level'):
+                    _nb._level = int(entry.get('level', 1))
+                if hasattr(_nb, 'garrison'):
+                    for _gk, _gv in entry.get('garrison', {}).items():
+                        if _gk in _nb.garrison:
+                            _nb.garrison[_gk] = int(_gv)
+                if hasattr(_nb, 'wave_order') and entry.get('wave_order'):
+                    _nb.wave_order = list(entry['wave_order'])
             _col, _row = entry['x'] // T, entry['y'] // T
             registry.register_existing(_col, _row, _btw, _bth, _nb)
             buildings.append(_nb)
@@ -1939,12 +1970,44 @@ def main(initial_choice=None):
 
     # Pre-render static previews for shop cards
     shop_previews: dict = {}
+    # Canvas nháp phải ĐỦ LỚN và entity phải đặt Ở TÂM canvas (không phải góc
+    # (0,0)) — SỬA LỖI 2 lớp:
+    #   1) draw() của Building neo GÓC-TRÊN-TRÁI (blit tại x,y) còn Tower/Trap
+    #      neo TÂM (rect center=(x,y)) — nếu vẽ tại world (0,0) (góc canvas),
+    #      sprite neo-TÂM bị CẮT MẤT NỬA (phần toạ độ âm nằm ngoài canvas,
+    #      pygame lặng lẽ bỏ qua, không phải lỗi vị trí mà MẤT PIXEL THẬT).
+    #   2) canvas 180×180 quá nhỏ — đo thực tế sprite tháp cao tới 169px,
+    #      SurikenTrap rộng tới 176px (measure_true_sprite_sizes.py) — dù đặt
+    #      đúng tâm vẫn tràn ra ngoài canvas nhỏ.
+    # Fix: canvas 400×400 + entity đặt tại TÂM canvas (200,200) — an toàn với
+    # MỌI kiểu neo. LƯU Ý: canvas 300 (margin 150 mỗi hướng) vẫn KHÔNG đủ cho
+    # ThornTrap/SurikenTrap — sprite bẫy neo LỆCH (chỉ ~10px bên trái tâm
+    # nhưng tới ~163-166px bên phải, đo thực tế bằng test), nên phải bù dư
+    # margin (200px) chứ không chỉ tính theo nửa-kích-thước đối xứng. Sau đó
+    # cắt về đúng vùng có pixel thật (bounding rect), fit vào khung 90×90 giữ
+    # tỉ lệ (không méo hình) rồi CĂN GIỮA.
+    _PREVIEW_CANVAS = 400
+    _PREVIEW_ORIGIN = _PREVIEW_CANVAS // 2
     for _bk, _bd in BUILDING_DEFS.items():
         if _bd.get('cls'):
-            _pb = _bd['cls'](0, 0)
-            _ps = pygame.Surface((180, 180), pygame.SRCALPHA)
+            _pb = _bd['cls'](_PREVIEW_ORIGIN, _PREVIEW_ORIGIN)
+            _ps = pygame.Surface((_PREVIEW_CANVAS, _PREVIEW_CANVAS), pygame.SRCALPHA)
             _pb.draw(_ps)
-            shop_previews[_bk] = pygame.transform.smoothscale(_ps, (90, 90))
+            _bbox = _ps.get_bounding_rect()
+            if _bbox.width > 0 and _bbox.height > 0:
+                _cropped = _ps.subsurface(_bbox).copy()
+                # THU NHỎ thêm ~20% (0.8) so với khung vừa khít — chừa viền
+                # quanh ảnh cho thoáng, vẫn CĂN GIỮA (offset (90-fit)//2).
+                _PREVIEW_SHRINK = 0.8
+                _fit_scale = min(90.0 / _cropped.get_width(), 90.0 / _cropped.get_height()) * _PREVIEW_SHRINK
+                _fit_w = max(1, round(_cropped.get_width() * _fit_scale))
+                _fit_h = max(1, round(_cropped.get_height() * _fit_scale))
+                _fitted = pygame.transform.smoothscale(_cropped, (_fit_w, _fit_h))
+                _final = pygame.Surface((90, 90), pygame.SRCALPHA)
+                _final.blit(_fitted, ((90 - _fit_w) // 2, (90 - _fit_h) // 2))
+                shop_previews[_bk] = _final
+            else:
+                shop_previews[_bk] = pygame.transform.smoothscale(_ps, (90, 90))
         else:
             _knd = _bd['kind']
             # Cây động (THÊM MỚI): ưu tiên tree_anim (frame 0 — ảnh tĩnh đủ cho
@@ -2513,7 +2576,7 @@ def main(initial_choice=None):
                     elif event.key == pygame.K_r:
                         active_commander.use_skill('R')
                 if not commander_mode and sm.is_combat:
-                    if event.key == pygame.K_k:
+                    if event.key == pygame.K_k and balance.TEST == True:
                         _spawn_panel = not _spawn_panel
             if event.type == pygame.KEYUP:
                 if commander_mode and active_commander:
@@ -3165,8 +3228,8 @@ def main(initial_choice=None):
                         active_commander.basic_attack()
                     elif skill_btn_rect and skill_btn_rect.collidepoint(_mx, _my) and selected_building:
                         if type(selected_building).__name__ == 'SurikenTrap':
-                            if res.can_afford({'wind_ore': 1}):
-                                res.spend({'wind_ore': 1})
+                            if res.can_afford({'wind_ore': balance.WIND_BREATH_ORB_COST}):
+                                res.spend({'wind_ore': balance.WIND_BREATH_ORB_COST})
                                 selected_building.trigger_wind_breath((hq.x, hq.y))
                                 status_msg = 'Wind Breath activated!'
                                 status_timer = 2.0
@@ -3200,11 +3263,15 @@ def main(initial_choice=None):
                                         _rm.spend(_RB(**{_need_key: _orb_amt}))
                                         status_msg = 'Upgrade that bai!'
                         else:
-                            # Building upgrade
-                            _cost_rb = selected_building.get_upgrade_cost()
-                            if _cost_rb is None:
+                            # Building upgrade — CHẶN nâng quá MAX_LEVEL: get_upgrade_cost()
+                            # trả ResourceBundle RỖNG (KHÔNG phải None) khi hết cấp → guard
+                            # `is None` cũ chết → _apply_level_bonus() tăng _level vô điều
+                            # kiện → Forge.draw() tra _FRAME_CONFIG[cấp-quá] → KeyError CRASH;
+                            # Farm/Workshop lên cấp vô hạn miễn phí. Chặn thẳng theo MAX_LEVEL.
+                            if selected_building._level >= getattr(selected_building, 'MAX_LEVEL', 999):
                                 status_msg = 'Already max level!'
                             else:
+                                _cost_rb = selected_building.get_upgrade_cost()
                                 _RBF = ['wood', 'stone', 'anti_stun', 'food', 'ore', 'crystal']
                                 _cost_d = {f: getattr(_cost_rb, f) for f in _RBF if getattr(_cost_rb, f, 0) > 0}
                                 if not res.can_afford(_cost_d):
@@ -3216,6 +3283,10 @@ def main(initial_choice=None):
                                     # _level, không hề gọi hàm áp bonus nào cả, nên nâng cấp
                                     # Farm/StoneWorkshop/WoodWorkshop/Forge không tăng chỉ số gì.
                                     selected_building._apply_level_bonus()
+                                    # Nâng Farm (tăng food/s) hoặc Forge (tăng slot vũ khí) làm
+                                    # tăng nguồn cung → cân bằng lại lính: giải phóng lính đang
+                                    # "đói"/"thiếu vũ khí" về sẵn sàng ngay tại thời điểm nâng cấp.
+                                    reconcile_soldiers()
                                     status_msg = f'Upgraded to Lv.{selected_building._level}!'
                         status_timer = 2.0
                     # ── Forge tab + craft click ────────────────────────────
@@ -3254,6 +3325,10 @@ def main(initial_choice=None):
                                 else:
                                     res.spend(_cost_d_tc)
                                     _camp._level += 1
+                                    # Buff HỒI TỐ cho lính ĐANG SỐNG (không chỉ lính train
+                                    # mới) — nút này trước đây chỉ tăng _level, bỏ qua vòng
+                                    # buff nằm trong TrainingCamp.upgrade().
+                                    _camp.apply_soldier_buffs_retroactive()
                                     status_msg = f'Trai nang len Lv {_camp._level}!'
                             status_timer = 2.0
                         # Tab switch
@@ -3327,7 +3402,18 @@ def main(initial_choice=None):
                                             if _scnt > 0:
                                                 _tc.return_expedition(_stype, _scnt * _tc.SQUAD_SIZE)
                                                 _tw_d.garrison[_stype] = 0
-                                    _tw_d.is_alive = False
+                                    # Phá hủy tháp. Tháp TƯỜNG: gỡ THẲNG khỏi wall_towers +
+                                    # xoá entity, KHÔNG phá tường (set is_alive=False sẽ kích
+                                    # loop tháp-chết ở ~2156 làm VỠ ô tường). Tháp ĐẤT:
+                                    # is_alive=False → cleanup cuối frame gỡ + trả ô lưới.
+                                    _wt_entry = next((t for t in wall_towers if t[1] is _tw_d), None)
+                                    if _wt_entry is not None:
+                                        wall_towers.remove(_wt_entry)
+                                        WorldQuery.remove_entity(_tw_d)
+                                        if selected_building is _tw_d:
+                                            selected_building = None
+                                    else:
+                                        _tw_d.is_alive = False
                                     status_msg = 'Da tat vu khi & xoa thap!'
                                 else:
                                     status_msg = f'Tat vu khi, hoan {_twc_d[2]} {_twc_d[1]}' if _twc_d else 'Da tat vu khi!'
@@ -3744,22 +3830,31 @@ def main(initial_choice=None):
                         _result_lines.extend(_va_reward_lines)
                         _va_reward_lines = []
                 else:
-                    for _rk in ('wood', 'stone', 'anti_stun', 'food', 'ore', 'serum'):
-                        setattr(res, _rk, int(getattr(res, _rk, 0) * 0.8))
+                    # Phạt thua −20% nguyên liệu qua ResourceManager.apply_defeat_penalty()
+                    # → `_stock = _stock * DEFEAT_PENALTY_KEEP_RATIO` (operator overloading
+                    # ResourceBundle.__mul__: nhân 14 field nguyên liệu, GIỮ nguyên vũ khí/bẫy).
+                    # res mirror nguyên liệu vào _stock nên bị phạt trực tiếp; chiều RM→res
+                    # phải đồng bộ tay vì apply_defeat_penalty THAY nguyên object _stock.
+                    from structures.buildings.resource_manager import ResourceManager as _RMdef
+                    _RMdef.get_instance().apply_defeat_penalty()
+                    _pen_stock = _RMdef.get_instance()._stock
+                    for _mf in _MATERIAL_FIELDS:
+                        object.__setattr__(res, _mf, getattr(_pen_stock, _mf))
                     if _played_name and _played_name in _cmdr_saved_stats:
                         _ps = _cmdr_saved_stats[_played_name]
                         _ps['level'] = max(1, _ps.get('level', 1) - 1)
                         _ps['xp'] = 0
-                    _result_lines = ['Penalty: -20% base resources',
+                    _result_lines = ['Penalty: -20% resources',
                                      'Commander demoted 1 level']
             else:
                 _result_lines = ['Free Training: no penalty, no level progress']
             # 4) Về Sảnh — mở lại quyền xây dựng/điều quân; HP map giữ nguyên
             sm.end_combat()
-            # Hồi sinh HQ nếu bị phá (thua): nếu không, frame sau vào lại combat sẽ
-            # thấy `not hq.is_alive` → THUA TỨC THÌ mãi mãi → không chơi lại được
-            # Vượt Ải/Thao Trường. Tường vẫn giữ hư hại (damage intact).
-            if hq is not None and not getattr(hq, 'is_alive', True):
+            # Reset HQ đầy máu MỖI khi kết thúc trận (thắng / thua / thoát): HQ
+            # KHÔNG mang hư hại sang trận sau. Trường hợp thua (HQ bị phá) thì đây
+            # cũng hồi sinh HQ để frame sau vào lại combat được — nếu không sẽ thấy
+            # `not hq.is_alive` → THUA TỨC THÌ mãi mãi. Tường vẫn giữ hư hại (intact).
+            if hq is not None:
                 hq._hp = hq._max_hp
                 hq.is_alive = True
             
@@ -3776,23 +3871,40 @@ def main(initial_choice=None):
                         _te.is_alive = False
                         WorldQuery.remove_entity(_te)
                 
-                # 2. Trả lính từ garrison/reserve của tháp
-                for _b in buildings:
-                    if type(_b).__name__ == 'Tower':
-                        for _stype, _sizes in getattr(_b, '_garrison_sizes', {}).items():
+                # 2. Trả lính garrison/reserve của MỌI tháp (ĐẤT + TƯỜNG) về trại.
+                #    - reserve = lính đã bị hút KHỎI map (_absorb_idle_squads) → step 1
+                #      không thấy → trả theo SỐ member sống + đúng soldier_type.
+                #    - deployed = entity trên map → step 1 đã trả rồi → chỉ clear
+                #      (tránh đếm 2 lần). garrison dict thường đã drain=0 ở start_combat.
+                _all_towers_ret = ([_b for _b in buildings if isinstance(_b, Tower)]
+                                   + [_t[1] for _t in wall_towers if isinstance(_t[1], Tower)])
+                for _b in _all_towers_ret:
+                    for _stype, _sizes in list(getattr(_b, '_garrison_sizes', {}).items()):
+                        if _sizes:
                             _tc.return_expedition(_stype, sum(_sizes))
-                        getattr(_b, '_garrison_sizes', {}).clear()
-                        for _k in getattr(_b, 'garrison', {}):
-                            _b.garrison[_k] = 0
-                        for _sq in getattr(_b, '_reserve_squads', []):
-                            _tc.return_expedition(_sq[0], _sq[1])
-                        getattr(_b, '_reserve_squads', []).clear()
-                        getattr(_b, '_active_squads', []).clear()
-            
-            # 3. Xoá tháp bị tắt vũ khí (disarmed)
-            _disarmed_towers = [b for b in buildings if type(b).__name__ == 'Tower' and getattr(b, '_disarmed', False)]
-            for _tw in _disarmed_towers:
+                    for _k in list(getattr(_b, 'garrison', {})):
+                        _b.garrison[_k] = 0
+                    if hasattr(_b, '_garrison_sizes'):
+                        _b._garrison_sizes = {_t: [] for _t in _b._garrison_sizes}
+                    for _sq in list(getattr(_b, '_reserve_squads', [])):
+                        _nalive = len([_m for _m in getattr(_sq, 'members', [])
+                                       if getattr(_m, 'is_alive', False)])
+                        _sstype = getattr(_sq, 'soldier_type', None)
+                        if _nalive > 0 and _sstype:
+                            _tc.return_expedition(_sstype, _nalive)
+                    _b._reserve_squads = []
+                    _b._deployed_squads = []
+
+            # 3. Xoá tháp bị tắt vũ khí (disarmed) — cả tháp ĐẤT lẫn tháp TƯỜNG.
+            #    Tháp đất: gỡ khỏi buildings + trả ô lưới. Tháp tường: gỡ khỏi
+            #    wall_towers + xoá entity, KHÔNG phá tường (disarm là tự nguyện).
+            _disarmed_ground = [b for b in buildings if isinstance(b, Tower) and getattr(b, '_disarmed', False)]
+            for _tw in _disarmed_ground:
                 buildings.remove(_tw)
+                # Tháp đất disarm giữ is_alive=True → purge_dead KHÔNG gỡ nó khỏi
+                # WorldQuery; sau buildings.remove, Pass 2.6 (`_wq_e not in buildings`)
+                # sẽ VẼ LẠI nó như entity → phải remove_entity để tháp biến mất HẲN.
+                WorldQuery.remove_entity(_tw)
                 WorldQuery.remove_static_anchor(id(_tw))
                 for _i in range(len(registry._placed) - 1, -1, -1):
                     if registry._placed[_i][4] is _tw:
@@ -3802,6 +3914,11 @@ def main(initial_choice=None):
                             for _dc in range(_tw2):
                                 registry._occupied.discard((_tcx + _dc, _tcy + _dr))
                         break
+            for _wtd in [_t for _t in wall_towers if getattr(_t[1], '_disarmed', False)]:
+                wall_towers.remove(_wtd)
+                WorldQuery.remove_entity(_wtd[1])
+                if selected_building is _wtd[1]:
+                    selected_building = None
             
             # 4. Quyết toán Food & Weapon cho lính (thuật toán A rồi B).
             # Lính sống đã về idle ở bước 1-2, lính chết đã biến mất khỏi
@@ -4653,9 +4770,17 @@ def main(initial_choice=None):
 
             else:
                 # ── ROSTER tab (tổng lính còn sống toàn map) ─────────────────
-                # Lấy tất cả tháp qua WorldQuery frame cache (đã được build mỗi frame)
+                # Lấy tất cả tháp qua WorldQuery frame cache.
                 # Dùng alias _WQ tránh Python đánh dấu 'WorldQuery' là local var toàn main()
                 from systems.world_query import WorldQuery as _WQ
+                # SỬA LỖI: cache (_f_towers) chỉ được DỰNG khi có nơi khác chủ động
+                # gọi _ensure_frame_cache() (vd AI titan qua build_context()) — ở
+                # Sảnh KHÔNG có titan nào nên KHÔNG AI gọi nó, _f_towers ở nguyên
+                # giá trị mặc định RỖNG mãi mãi dù tháp đã đặt/điều lính xong →
+                # cột "Thap"/"Tu do" luôn 0. Gọi phòng thủ trước khi đọc — hàm
+                # này tự return sớm nếu cache đã hợp lệ (no-op rẻ), an toàn gọi
+                # bất kỳ đâu trước khi cần dữ liệu tươi.
+                _WQ._ensure_frame_cache()
                 _all_towers = list(_WQ._f_towers or [])
                 _roster = _camp.count_live_soldiers(_all_towers)
 
@@ -4671,7 +4796,10 @@ def main(initial_choice=None):
                 _homeless_counts = {t: 0 for t in _TC_TYPES}
                 for _s in getattr(_WQ, '_f_soldiers', []):
                     if getattr(_s, '_homeless', False) and getattr(_s, 'is_alive', False):
-                        st = _s.__class__.__name__
+                        # Khoá roster theo NAME ('Warrior'/'Archer'/'Lancer') — class
+                        # thật là WarriorSoldier/... nên `__class__.__name__` KHÔNG khớp
+                        # `_TC_TYPES` → trước đây cột "Tự do" luôn = 0.
+                        st = getattr(_s, 'NAME', None)
                         if st in _homeless_counts:
                             _homeless_counts[st] += 1
 
@@ -4946,7 +5074,9 @@ def main(initial_choice=None):
                         screen.blit(font_sm.render(_pl2, True, (175, 155, 125)),
                                     (_fpx + 22, _fcy))
                         _ore_a2 = getattr(res, _ok2, 0)
-                        _ol2 = font_sm.render(f'{_ore_a2}/{_oc2}',
+                        # Hiện TÊN nguyên liệu cần (vd "ORE", "WIND") cạnh số
+                        # có/cần — trước đây chỉ có số, không rõ cần loại nào.
+                        _ol2 = font_sm.render(f'{_ok2[:4].upper()} {_ore_a2}/{_oc2}',
                                               True, (155, 200, 115) if _cc2 else (185, 85, 65))
                         screen.blit(_ol2, (_cbr2.x - _ol2.get_width() - 4, _fcy))
                         pygame.draw.rect(screen,
@@ -5094,17 +5224,29 @@ def main(initial_choice=None):
                 screen.blit(_wohdr, (_twpx + 10, _twy))
                 _twy += 16
                 _wave_slot_rects = []
-                for _wi in range(_tw.MAX_WAVES_PER_EVENT):
+                _total_slots = _tw.MAX_WAVES_PER_EVENT
+                _slot_w = 82
+                _spacing = 88
+                _max_per_row = max(1, (_TWW - 20) // _spacing)
+                for _wi in range(_total_slots):
                     _wt2 = _tw.wave_order[_wi]
-                    _wsr = pygame.Rect(_twpx + 10 + _wi * 88, _twy, 82, 22)
+                    _row = _wi // _max_per_row
+                    _col = _wi % _max_per_row
+                    _wsr = pygame.Rect(_twpx + 10 + _col * _spacing, _twy + _row * 28, _slot_w, 22)
                     _wave_slot_rects.append(_wsr)
                     _wcol = _TC_COLORS.get(_wt2, (120, 120, 120))
                     pygame.draw.rect(screen, (22, 38, 62), _wsr, border_radius=4)
                     pygame.draw.rect(screen, _wcol, _wsr, 1, border_radius=4)
-                    _wstxt = font_sm.render(_wt2[:7], True, _wcol)
+                    _disp_txt = _wt2
+                    _wstxt = font_sm.render(_disp_txt, True, _wcol)
+                    while _wstxt.get_width() > _slot_w - 4 and len(_disp_txt) > 1:
+                        _disp_txt = _disp_txt[:-1]
+                        _wstxt = font_sm.render(_disp_txt, True, _wcol)
                     screen.blit(_wstxt, (_wsr.centerx - _wstxt.get_width() // 2,
                                          _wsr.centery - _wstxt.get_height() // 2))
-                _twy += 30
+                
+                _num_rows = (_total_slots - 1) // _max_per_row + 1
+                _twy += _num_rows * 28 + 2
 
             # ── TAB 1: SQUADS ─────────────────────────────────────────────────
             elif _tower_tab == 1:
@@ -5784,11 +5926,11 @@ def main(initial_choice=None):
             screen.blit(_top, (8, 8))
             
             # Draw Commander HUD Panel
-            # _hud_y dịch xuống (trước: 32, rồi 42 — vẫn chưa đủ) — tránh đè
-            # lên banner tiến độ Vượt Ải (draw_vuot_ai_hud, ui/vuot_ai.py) vốn
-            # ở cùng góc trên-trái, và chừa khoảng thở với dòng "COMMANDER
-            # MODE [...]" phía trên (y=8).
-            _hud_x, _hud_y = 8, 54
+            # _hud_y dịch xuống (trước: 32, rồi 42, rồi 54, rồi 68 — vẫn chưa
+            # đủ) — tránh đè lên banner tiến độ Vượt Ải (draw_vuot_ai_hud,
+            # ui/vuot_ai.py) vốn ở cùng góc trên-trái, và chừa khoảng thở với
+            # dòng "COMMANDER MODE [...]" phía trên (y=8).
+            _hud_x, _hud_y = 8, 90
             _hud_w, _hud_h = 240, 70
             
             # Background & Border
@@ -6175,6 +6317,10 @@ def main(initial_choice=None):
                             if _twc_rb:
                                 _fgs_rb[0].unequip(_twc_rb[0], _twc_rb[1], _twc_rb[2])
                         _rb._disarmed = True
+                    # Tháp ĐẤT chết → nhả lính reserve ra map (giống tháp tường ở ~2186),
+                    # nếu không lính đang trốn trong tháp bốc hơi cùng tháp.
+                    if hasattr(_rb, 'spill_reserves'):
+                        _rb.spill_reserves()
                 elif isinstance(_rb, Forge):
                     # on_destroyed() trừ _contributed_limits khỏi kho chung và tự
                     # chạy reconcile_soldiers() cho LÀN LÍNH (soldier_weapon).

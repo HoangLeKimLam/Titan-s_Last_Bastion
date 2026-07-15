@@ -305,6 +305,18 @@ class ErenCommander(Commander):
             self._inv_timer -= dt
             if self._inv_timer <= 0:
                 self._invincible = False
+
+        # Suy giảm stack-damage & combo Ở DẠNG TITAN — super().update() bị bỏ qua
+        # nên phải tick tay (giống Commander.update); thiếu thì stack giữ mãi tới
+        # 2.5× và combo đông cứng dù ngừng đánh → đòn đấm phồng damage vô thời hạn.
+        if self._combo_reset_left > 0:
+            self._combo_reset_left = max(0.0, self._combo_reset_left - dt)
+            if self._combo_reset_left == 0:
+                self._combo_step = 0
+        if self._titan_stack_timer > 0:
+            self._titan_stack_timer = max(0.0, self._titan_stack_timer - dt)
+            if self._titan_stack_timer == 0.0:
+                self._titan_stack = 0
         
         # Lấy toạ độ từ frame trước (vì game.py có thể đã thay đổi x, y qua WASD)
         old_x = getattr(self, '_last_titan_x', self.x)
@@ -662,6 +674,29 @@ class ErenCommander(Commander):
                 self._titan_e_rage()
             elif skill_id == "R":
                 self._exit_titan_form()
+
+    def use_skill(self, skill_id: str) -> None:
+        """Ghi đè cho R (biến hình Titan): cooldown CHỈ tính từ lúc THOÁT form.
+
+        Lớp cha luôn nạp cd sau `_activate_skill` → vừa vào form là R đã cd 40s,
+        bấm R để thoát lại bị chính cd-gate của `use_skill` chặn → KẸT dạng Titan
+        tới khi cd hết hoặc _titan_hp cạn. Ở đây tách 2 chiều:
+          • Vào form: gate bằng cd (chống biến hình lại quá nhanh sau thoát), KHÔNG nạp cd.
+          • Thoát form: LUÔN cho phép, nạp cd (bắt đầu đếm TỪ LÚC THOÁT).
+        Q/E và mọi skill khác giữ nguyên hành vi lớp cha.
+        """
+        if skill_id == 'R':
+            if not self.is_skill_unlocked('R'):
+                return
+            if not self.is_in_titan_form:
+                if self._skill_cd.get('R', 0.0) > 0:
+                    return
+                self._activate_skill('R')        # vào form — KHÔNG nạp cd ở đây
+            else:
+                self._activate_skill('R')        # thoát form
+                self._skill_cd['R'] = float(self.SKILL_COOLDOWNS['R'])
+            return
+        super().use_skill(skill_id)
                 
     def _enter_titan_form(self) -> None:
         """BIẾN HÌNH sang dạng titan — nạp đầy `_titan_hp`, KHÔNG tốn cooldown ở đây.

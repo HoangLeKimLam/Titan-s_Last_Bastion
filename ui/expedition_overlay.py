@@ -81,7 +81,7 @@ class ExpeditionOverlay:
                 return True
             if event.type in (pygame.MOUSEBUTTONDOWN, pygame.KEYDOWN):
                 return True
-            return False
+            return True   # modal cứng: nuốt cả wheel/motion → không zoom/pause sau lưng
         # Alert: click 2 nút.
         if self.mgr.current_encounter is not None:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -93,7 +93,7 @@ class ExpeditionOverlay:
                     self.mgr.resolve_fight()
                     return True
                 return True                  # nuốt mọi click khi alert mở
-            return False
+            return True   # modal cứng: ESC/wheel/chuột phải cũng bị nuốt (không mở pause/zoom)
         # Defeat banner: bất kỳ click/phím nào đóng sớm.
         if self.mgr.last_result is not None:
             if event.type in (pygame.MOUSEBUTTONDOWN, pygame.KEYDOWN):

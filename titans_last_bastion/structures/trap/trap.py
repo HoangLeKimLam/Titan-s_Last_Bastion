@@ -491,7 +491,8 @@ class PoisonTrap(Trap):
                 if (t.x - cx)**2 + (t.y - cy)**2 <= tr**2:
                     self.state = 'poisoning'
                     self._frame_idx = 8
-                    break
+                    self._tick_timer = 0.0   # reset nhịp mỗi lần kích hoạt MỚI —
+                    break                    # không thì tick độc đầu của lượt sau nổ sớm/tức thì
                     
         if self.state == 'poisoning':
             self._tick_timer += dt

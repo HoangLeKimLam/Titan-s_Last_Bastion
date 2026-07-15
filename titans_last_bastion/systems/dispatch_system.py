@@ -540,13 +540,19 @@ class DispatchManager:
                     "lost_soldiers": dict(p.soldiers),
                     "timer": RESULT_BANNER_TIME,
                 }
+                self._remove_party(p)   # mất lính + mất đồ — XOÁ TRƯỚC callback
                 # Lính thua trận thám hiểm coi như CHẾT (khác rút lui) — vũ khí
                 # đã trang bị cho họ phải hoàn lại Forge, cùng cơ chế với lính
                 # chết trong combat thường (game.py lo phần thật qua callback,
                 # module này giữ nguyên tắc thuần logic, không import ngược).
+                # `p` phải bị xoá khỏi `self.parties` TRƯỚC khi gọi callback:
+                # callback gọi reconcile_soldiers() → count_active_soldiers()
+                # → total_dispatched_soldiers() đọc `self.parties` — nếu `p`
+                # còn trong đó, lính vừa "chết" vẫn bị đếm như đang thám hiểm
+                # (sống), khiến reconcile lần này KHÔNG thấy chỗ upkeep/vũ khí
+                # vừa giải phóng (chỉ tự đúng ở lần reconcile kế tiếp).
                 if self._on_soldiers_lost is not None:
                     self._on_soldiers_lost(dict(p.soldiers))
-                self._remove_party(p)   # mất lính + mất đồ
             self.active_combat = None
         return st
 

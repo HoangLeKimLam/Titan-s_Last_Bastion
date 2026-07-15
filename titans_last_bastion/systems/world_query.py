@@ -1122,6 +1122,59 @@ class WorldQuery:
         return False
 
     @classmethod
+    def get_dead_wall_zone_pairs_near(cls, cx: float, cy: float, radius: float,
+                                      min_sections: int = 1) -> set:
+        """Trả về tập hợp các cặp zone (inner, outer) của các mảng tường đã bể.
+        
+        Giống has_dead_wall_near nhưng trả về đích danh bức tường bị vỡ 
+        để lính mở zone chính xác thay vì mở bừa bãi.
+        """
+        r2 = radius * radius
+        dead = []
+        for w in cls._wall_refs:
+            if getattr(w, 'is_alive', True):
+                continue
+            if cls.is_wall_blocked(w.x + 16.0, w.y + 16.0, radius=10.0):
+                continue
+
+            wx = w.x + 16.0
+            wy = w.y + 16.0
+            dx = wx - cx
+            dy = wy - cy
+            if dx * dx + dy * dy <= r2:
+                dead.append((wx, wy))
+
+        need = max(1, int(min_sections))
+        valid_dead_points = []
+        if need <= 1:
+            valid_dead_points = dead
+        else:
+            ADJ = 70.0
+            clusters: list[list[tuple]] = []
+            for p in dead:
+                target_cl = None
+                for cl in clusters:
+                    if any(math.hypot(p[0] - q[0], p[1] - q[1]) <= ADJ for q in cl):
+                        target_cl = cl
+                        break
+                if target_cl is None:
+                    clusters.append([p])
+                else:
+                    target_cl.append(p)
+            for cl in clusters:
+                if len(cl) >= need:
+                    valid_dead_points.extend(cl)
+
+        pairs = set()
+        for p in valid_dead_points:
+            for wall_name, box in cls._zone_boxes.items():
+                if cls._dist_to_box_perimeter(box, p[0], p[1]) < 32.0:
+                    pair = cls.WALL_ZONE_PAIRS.get(wall_name)
+                    if pair:
+                        pairs.add(pair)
+        return pairs
+
+    @classmethod
     def find_blocking_wall_to(cls, ex: float, ey: float,
                               tx: float, ty: float,
                               block_radius: float = 55.0):

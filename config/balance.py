@@ -19,7 +19,7 @@ from core.game_state import ResourceBundle
 # ═══════════════════════════════════════════════════════════════════════════
 # TITAN THƯỜNG  (titans_last_bastion/characters/titans/titan.py)
 # ═══════════════════════════════════════════════════════════════════════════
-
+TEST= True
 # ── Titan (base ABC) ──
 TITAN_HP                    = 100
 TITAN_SPEED                 = 60.0
@@ -169,7 +169,7 @@ STRAT_SOLDIER_HUNTER_MULT  = 3.0
 AI_DEFAULT_ATTACK_RANGE = 60.0
 AI_RUN_THRESHOLD        = 250.0   # khoảng cách > ngưỡng này thì chạy nước rút
 AI_RUN_SPEED_MULT       = 1.5
-AI_TELEGRAPH_DELAY      = 0.5     # 1s "ra đòn báo trước", hết thì check né
+AI_TELEGRAPH_DELAY      = 1.0     # 1s "ra đòn báo trước", hết thì check né
 AI_KAMIKAZE_CMDR_EXPLODE_PAUSE = 1.0
 PRIORITY_AGGRO_RANGE      = 360.0
 PRIORITY_VIS_ROLL_COOLDOWN = 2.0
@@ -512,13 +512,40 @@ TT_CORNER_MARGIN   = 16     # né vùng GÓC khi spawn
 # ═══════════════════════════════════════════════════════════════════════════
 # LOOT  (systems/loot_system.py)
 # ═══════════════════════════════════════════════════════════════════════════
+# Mỗi dòng (item, prob) là XÁC SUẤT ĐỘC LẬP: random.random() <= prob → rớt 1-3 cái
+# (systems/loot_system.py). Thang hiếm: nhiều 0.6-0.7 · hiếm vừa 0.18 · hiếm 0.07-0.12
+# · siêu hiếm 0.025 · boss "hơi nhiều" 0.35.
+
+# Titan THƯỜNG (Regular): chỉ gỗ/đá (nhiều), hiếm ra ore/pheromone.
+_LOOT_REGULAR = [
+    ('wood', 0.7), ('stone', 0.7), ('ore', 0.12), ('titan_pheromone', 0.1),
+]
+# Titan KHÔNG phải boss (Armored/Wolf/TowerHunter/SoldierHunter + Titan generic):
+# như Regular + quặng đặc biệt (TRỪ fire_ore & anti_armor_ore) hiếm vừa;
+# anti_armor_ore & anti_stun hiếm; serum siêu hiếm.
+_LOOT_NONBOSS = _LOOT_REGULAR + [
+    ('ice_ore', 0.18), ('water_ore', 0.18), ('electric_ore', 0.18),
+    ('wind_ore', 0.18), ('acid_ore', 0.18),
+    ('anti_armor_ore', 0.07), ('anti_stun', 0.07), ('serum', 0.025),
+]
+# BOSS (Colossal/Beast/Founding): quặng đặc biệt NHIỀU; serum/anti_stun/anti_armor
+# hơi nhiều; kèm ore/pheromone. KHÔNG có fire_ore (chỉ Kamikaze rớt fire_ore).
+_LOOT_BOSS = [
+    ('ore', 0.5), ('titan_pheromone', 0.5),
+    ('ice_ore', 0.7), ('water_ore', 0.7), ('electric_ore', 0.7),
+    ('wind_ore', 0.7), ('acid_ore', 0.7),
+    ('serum', 0.35), ('anti_stun', 0.35), ('anti_armor_ore', 0.35),
+]
+
 LOOT_TABLE = {
-    'Titan': [('ore', 0.5), ('wood', 0.4), ('stone', 0.4)],
-    'RegularTitan': [('ore', 0.6), ('anti_stun', 0.2)],
-    'ArmoredTitan': [('anti_armor_ore', 0.5), ('stone', 0.8), ('serum', 0.1)],
-    'ColossalTitan': [('fire_ore', 0.8), ('serum', 0.5), ('titan_pheromone', 0.2)],
-    'BeastTitan': [('titan_pheromone', 1.0), ('acid_ore', 0.5), ('wood', 0.8)],
-    'FoundingTitan': [('serum', 1.0), ('titan_pheromone', 1.0), ('electric_ore', 0.8)],
+    'Titan':         _LOOT_NONBOSS,   # fallback cho Wolf/TowerHunter/SoldierHunter + generic
+    'RegularTitan':  _LOOT_REGULAR,
+    'ArmoredTitan':  _LOOT_NONBOSS,
+    # Kamikaze (= "Kazekage"): non-boss + fire_ore — NGUỒN DUY NHẤT của fire_ore.
+    'Kamikaze':      _LOOT_NONBOSS + [('fire_ore', 0.4)],
+    'ColossalTitan': _LOOT_BOSS,
+    'BeastTitan':    _LOOT_BOSS,
+    'FoundingTitan': _LOOT_BOSS,
 }
 
 
@@ -552,19 +579,23 @@ TRAP_WEAPON_COST = {
 # Chi phí XÂY (gỗ/đá/quặng) từng loại building/tower/trap trong shop. Mặc
 # định 0 (chưa cân bằng) — chỉnh trực tiếp các số ở đây, không cần sửa game.py.
 BUILD_COSTS = {
-    'WoodWorkshop':  {'wood': 0, 'stone': 0, 'ore': 0},
-    'Farm':          {'wood': 0, 'stone': 0, 'ore': 0},
-    'Forge':         {'wood': 0, 'stone': 0, 'ore': 0},
-    'StoneWorkshop': {'wood': 0, 'stone': 0, 'ore': 0},
-    'BasicTower':    {'wood': 0, 'stone': 0, 'ore': 0},
-    'ElectricTower': {'wood': 0, 'stone': 0, 'ore': 0},
-    'WaterTower':    {'wood': 0, 'stone': 0, 'ore': 0},
-    'IceTower':      {'wood': 0, 'stone': 0, 'ore': 0},
-    'ThornTrap':     {'wood': 0, 'stone': 0, 'ore': 0},
-    'SurikenTrap':   {'wood': 0, 'stone': 0, 'ore': 0},
-    'PoisonTrap':    {'wood': 0, 'stone': 0, 'ore': 0},
-    'ExplodeTrap':   {'wood': 0, 'stone': 0, 'ore': 0},
-    'BaitTrap':      {'wood': 0, 'stone': 0, 'ore': 0},
+    # Xưởng sản xuất: xây bằng nguyên liệu "đối lập" (xưởng gỗ tốn đá & ngược lại)
+    # để không tự bootstrap. Khởi đầu 200 gỗ / 150 đá / 80 ore → xây được vài cái.
+    'WoodWorkshop':  {'wood': 0,  'stone': 40, 'ore': 0},
+    'StoneWorkshop': {'wood': 40, 'stone': 0,  'ore': 0},
+    'Farm':          {'wood': 30, 'stone': 30, 'ore': 0},
+    'Forge':         {'wood': 60, 'stone': 60, 'ore': 10},
+    # Tháp: cơ bản gỗ+đá; tháp nguyên tố thêm chút ore.
+    'BasicTower':    {'wood': 40, 'stone': 40, 'ore': 0},
+    'ElectricTower': {'wood': 50, 'stone': 50, 'ore': 5},
+    'WaterTower':    {'wood': 50, 'stone': 50, 'ore': 5},
+    'IceTower':      {'wood': 50, 'stone': 50, 'ore': 5},
+    # Bẫy: rẻ hơn tháp.
+    'ThornTrap':     {'wood': 20, 'stone': 0,  'ore': 0},
+    'SurikenTrap':   {'wood': 20, 'stone': 10, 'ore': 0},
+    'PoisonTrap':    {'wood': 20, 'stone': 20, 'ore': 0},
+    'ExplodeTrap':   {'wood': 30, 'stone': 20, 'ore': 0},
+    'BaitTrap':      {'wood': 20, 'stone': 0,  'ore': 0},
 }
 
 # Số lượng quặng (loại ORB_FIELD riêng từng tháp: ore/electric_ore/water_ore/
@@ -573,11 +604,14 @@ BUILD_COSTS = {
 # hẳn 1 cấp (mỗi orb cộng dồn damage tới khi đủ ngưỡng LV2_DMG_THRESHOLD
 # thì tự động lên cấp).
 TOWER_ORB_COST = {
-    'BasicTower':    1,
-    'ElectricTower': 1,
-    'WaterTower':    1,
-    'IceTower':      1,
+    'BasicTower':    5,
+    'ElectricTower': 5,
+    'WaterTower':    5,
+    'IceTower':      5,
 }
+
+# Số quặng gió (wind_ore) tiêu MỖI LẦN kích Wind Breath (SurikenTrap).
+WIND_BREATH_ORB_COST = 5
 
 # Công thức CHẾ TẠO — (key, ore_key, color, label, ore_cost, amount_gain)
 # ore_cost / amount_gain là 2 số cân bằng; color/label chỉ để hiển thị.

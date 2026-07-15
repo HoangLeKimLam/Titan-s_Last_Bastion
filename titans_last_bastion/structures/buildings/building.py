@@ -1146,18 +1146,25 @@ class TrainingCamp(Building):
         if rm.can_afford(cost):
             rm.spend(cost)
             self._level += 1
-            
-            # Retroactively apply buffs to all existing soldiers
-            buffs = self.get_soldier_buffs()
-            hp_mult = buffs.get('hp_mult', 1.0)
-            dmg_mult = buffs.get('dmg_mult', 1.0)
-            from systems.world_query import WorldQuery
-            for ent in getattr(WorldQuery, '_entities', []):
-                if getattr(ent, 'ENTITY_TYPE', '') == 'soldier' and getattr(ent, 'is_alive', False):
-                    old_max = ent._max_hp
-                    ent._max_hp = int(ent.BASE_HP * hp_mult)
-                    ent._hp += (ent._max_hp - old_max)
-                    ent._damage = int(ent.ATTACK_DAMAGE * dmg_mult)
+            self.apply_soldier_buffs_retroactive()
+
+    def apply_soldier_buffs_retroactive(self) -> None:
+        """Áp buff cấp trại (`get_soldier_buffs()`, +15% HP/damage mỗi cấp) cho
+        TOÀN BỘ lính ĐANG SỐNG trên map ngay lập tức: quét `WorldQuery._entities`,
+        tính lại `_max_hp = BASE_HP*hp_mult` rồi CỘNG phần chênh vào `_hp` (giữ
+        nguyên % máu, không hồi đầy), ghi đè `_damage = ATTACK_DAMAGE*dmg_mult`.
+        Gọi từ CẢ `upgrade()` LẪN nút UPGRADE trại trong game.py — để lính đang
+        chiến đấu cũng mạnh lên ngay, không chỉ lính train mới về sau."""
+        buffs = self.get_soldier_buffs()
+        hp_mult = buffs.get('hp_mult', 1.0)
+        dmg_mult = buffs.get('dmg_mult', 1.0)
+        from systems.world_query import WorldQuery
+        for ent in getattr(WorldQuery, '_entities', []):
+            if getattr(ent, 'ENTITY_TYPE', '') == 'soldier' and getattr(ent, 'is_alive', False):
+                old_max = ent._max_hp
+                ent._max_hp = int(ent.BASE_HP * hp_mult)
+                ent._hp += (ent._max_hp - old_max)
+                ent._damage = int(ent.ATTACK_DAMAGE * dmg_mult)
 
     def get_soldier_buffs(self) -> dict:
         """Cấp trại càng cao lính ra càng mạnh (+15% HP/Damage mỗi cấp)."""
@@ -1183,6 +1190,18 @@ class TrainingCamp(Building):
                 st = sq.soldier_type
                 if st in result:
                     result[st]['deployed'] += alive
+            # Lính ĐIỀU tới tháp ở Sảnh nằm trong `garrison` (chưa manifest thành
+            # squad) — vẫn "ở trong tháp" nên phải đếm vào 'deployed'. Khi manifest,
+            # `garrison[t] -= 1` cùng lúc sinh squad → mỗi lính chỉ ở 1 nơi (garrison
+            # HOẶC squad), KHÔNG đếm đôi.
+            # SỬA LỖI: `garrison[t]` là SỐ SQUAD (docstring tower.py:106), KHÔNG
+            # phải số lính — cộng thẳng ra "3" khi thực ra là 3 squad = 30 lính.
+            # Số lính THẬT nằm ở `_garrison_sizes[t]` (list song song, mỗi phần tử
+            # = số lính của 1 squad, tower.py:109) — phải SUM(sizes), không phải
+            # đếm SỐ LƯỢNG squad.
+            for gst, sizes in getattr(tw, '_garrison_sizes', {}).items():
+                if gst in result:
+                    result[gst]['deployed'] += sum(max(0, int(s)) for s in sizes)
         # Tổng mỗi loại
         for t in result:
             result[t]['total'] = result[t]['idle'] + result[t]['deployed']

@@ -486,9 +486,13 @@ class WaterProjectile(Projectile):
         vy = getattr(t, '_vy', 0.0)
         speed = (vx ** 2 + vy ** 2) ** 0.5
         if speed < 1.0:
-            # Titan đứng yên → đẩy ngược hướng từ projectile đến titan
-            dx = t.x - self.x
-            dy = t.y - self.y
+            # Titan đứng yên → đẩy RA XA NGUỒN BẮN (vị trí tháp `_shooter`).
+            # KHÔNG dùng self.x/self.y: update() đã snap đạn trùng target NGAY
+            # trước _on_hit → self.x−t.x=0 → vector (0,0) → mục tiêu chính đứng
+            # yên (đúng con đang húc tường) không bị đẩy. Dùng vị trí tháp làm gốc.
+            _src = getattr(self, '_shooter', None)
+            dx = t.x - getattr(_src, 'x', self.x)
+            dy = t.y - getattr(_src, 'y', self.y)
             d = (dx ** 2 + dy ** 2) ** 0.5 or 1.0
             vx, vy, speed = dx / d, dy / d, 1.0
         kb_speed = self._push_force * 0.6 / max(self._kb_duration, 0.01)

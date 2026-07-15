@@ -1711,7 +1711,9 @@ class ArmoredAI(TitanAI):
         if callable(trig):
             dx = target.x - titan.x
             dy = target.y - titan.y
-            run_speed = float(getattr(titan, '_speed', 60.0)) * float(getattr(titan, '_slow_factor', 1.0))
+            # KHÔNG nhân _slow_factor ở đây — dash_step() đã áp slow mỗi frame.
+            # Nhân 2 lần = slow² → cú lao húc khi dính băng/Suriken chậm quá mức.
+            run_speed = float(getattr(titan, '_speed', 60.0))
             if trig(dx, dy, run_speed, dash_target=target):
                 self.state = STATE_SKILL
                 self.last_reason = 'Dash húc Wall'
@@ -2443,10 +2445,9 @@ class FoundingAI(TitanAI):
             self._tick_minions(dt)
             return
 
-        if hasattr(titan, '_summon_cd_timer'):
-            titan._summon_cd_timer = max(0.0, titan._summon_cd_timer - dt)
-        if hasattr(titan, '_attack_cd_timer'):
-            titan._attack_cd_timer = max(0.0, titan._attack_cd_timer - dt)
+        # _summon_cd_timer/_attack_cd_timer ĐƯỢC trừ trong FoundingTitan.update_anim()
+        # (đường _advance_animation chạy mỗi frame) — KHÔNG trừ lại ở đây, nếu không
+        # boss đếm ngược GẤP ĐÔI (triệu hồi ~7.5s thay vì 15s, đánh ~1.5s thay vì 3s).
         self._attack_cd = max(0.0, self._attack_cd - dt * getattr(self.titan, '_slow_factor', 1.0))
 
         check = getattr(titan, '_check_phase', None)

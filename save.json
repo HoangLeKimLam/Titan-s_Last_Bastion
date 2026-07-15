@@ -1,20 +1,20 @@
 {
   "current_level": 1,
   "resources": {
-    "wood": 380,
-    "stone": 246,
+    "wood": 205,
+    "stone": 134,
     "anti_stun": 0,
     "food": 100,
     "ore": 80,
     "serum": 0,
-    "fire_ore": 999,
-    "ice_ore": 999,
-    "electric_ore": 999,
-    "water_ore": 999,
-    "wind_ore": 999,
-    "acid_ore": 999,
-    "anti_armor_ore": 999,
-    "titan_pheromone": 50,
+    "fire_ore": 0,
+    "ice_ore": 0,
+    "electric_ore": 0,
+    "water_ore": 0,
+    "wind_ore": 0,
+    "acid_ore": 0,
+    "anti_armor_ore": 0,
+    "titan_pheromone": 0,
     "tower_weapon": 0,
     "basic_projectlie": 0,
     "ice_projectlie": 0,
@@ -477,7 +477,7 @@
     {
       "x": 3888,
       "y": 416,
-      "hp": 9625,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -974,7 +974,7 @@
     {
       "x": 3588,
       "y": 3814,
-      "hp": 6500,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1023,7 +1023,7 @@
     {
       "x": 4001,
       "y": 3814,
-      "hp": 7300,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1226,7 +1226,7 @@
     {
       "x": 448,
       "y": 1186,
-      "hp": 9700,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1261,7 +1261,7 @@
     {
       "x": 448,
       "y": 1456,
-      "hp": 8950,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1324,7 +1324,7 @@
     {
       "x": 448,
       "y": 1942,
-      "hp": 8875,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1422,7 +1422,7 @@
     {
       "x": 448,
       "y": 2698,
-      "hp": 7150,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1443,7 +1443,7 @@
     {
       "x": 448,
       "y": 2860,
-      "hp": 8950,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1464,7 +1464,7 @@
     {
       "x": 448,
       "y": 3022,
-      "hp": 7750,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1737,7 +1737,7 @@
     {
       "x": 4918,
       "y": 1834,
-      "hp": 8125,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -1821,7 +1821,7 @@
     {
       "x": 4918,
       "y": 2482,
-      "hp": 9125,
+      "hp": 10000,
       "max_hp": 10000,
       "alive": true
     },
@@ -3591,6 +3591,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3602,6 +3605,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3613,6 +3619,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3624,6 +3633,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3635,6 +3647,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3646,6 +3661,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3657,6 +3675,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3668,6 +3689,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3679,6 +3703,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3690,6 +3717,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3701,6 +3731,9 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3712,6 +3745,31 @@
       "hp": 300,
       "level": 1,
       "alive": true,
+      "damage": 0,
+      "garrison": {},
+      "wave_order": [],
+      "stun_immune": false,
+      "serum_buff": false,
+      "anti_armor_buff": false
+    },
+    {
+      "x": 3584,
+      "y": 2130,
+      "type": "BasicTower",
+      "hp": 2000,
+      "level": 1,
+      "alive": true,
+      "damage": 100,
+      "garrison": {
+        "Archer": 0,
+        "Lancer": 0,
+        "Warrior": 0
+      },
+      "wave_order": [
+        "Warrior",
+        "Lancer",
+        "Archer"
+      ],
       "stun_immune": false,
       "serum_buff": false,
       "anti_armor_buff": false
@@ -3720,7 +3778,7 @@
   "towers": [],
   "traps": [],
   "training_idle": {
-    "Warrior": 0,
+    "Warrior": 10,
     "Archer": 0,
     "Lancer": 0
   },
@@ -3737,11 +3795,11 @@
   "chopped_trees": [],
   "hq_hp": 5000,
   "weapon_stock": {
-    "wood": 0,
-    "stone": 0,
+    "wood": 205,
+    "stone": 134,
     "anti_stun": 0,
-    "food": 0,
-    "ore": 0,
+    "food": 100,
+    "ore": 80,
     "serum": 0,
     "fire_ore": 0,
     "ice_ore": 0,
@@ -3784,8 +3842,8 @@
     "acid_ore": 0,
     "anti_armor_ore": 0,
     "titan_pheromone": 0,
-    "tower_weapon": 0,
-    "basic_projectlie": 0,
+    "tower_weapon": 10,
+    "basic_projectlie": 10,
     "ice_projectlie": 0,
     "electric_projectlie": 0,
     "water_projectlie": 0,
@@ -3795,8 +3853,8 @@
     "bait_trap": 0,
     "poison_trap": 0,
     "suriken_trap": 0,
-    "soldier_weapon": 0,
-    "sword": 0,
+    "soldier_weapon": 10,
+    "sword": 10,
     "spear": 0,
     "arrow": 0,
     "poison_arrow": 0,
