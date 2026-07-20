@@ -834,17 +834,21 @@ def _draw_ground_shadow(screen, foot_x: float, foot_y: float, width: int) -> Non
 
 
 # ── Blocked tile set (walls + objects with clearance buffer) ───────────────────
-def _build_blocked_tiles(sprites=None, castle_surf=None) -> set[tuple[int, int]]:
+def _build_blocked_tiles(wall_sections=(), sprites=None, castle_surf=None) -> set[tuple[int, int]]:
     """Tính TẬP Ô LƯỚI (col,row) không được đặt công trình lên — dùng bởi
     `BuildingRegistry.can_place()` (qua `self._blocked`) làm 1 trong 3 điều
     kiện chặn (cùng với `_in_zone`/`_occupied`).
 
     Thuật toán 2 nguồn:
-    1. VÒNG TƯỜNG (Maria/Rose/Sina): mỗi vòng chặn 1 dải Ô ĐỆM KHÔNG ĐỐI
-       XỨNG quanh 4 cạnh — trên/trái đệm 1 ô vào trong (sprite tường mọc
-       RA NGOÀI khỏi mép), phải/dưới đệm 2 ô vào trong (sprite `wall_Y`
-       kéo dài VÀO TRONG nhiều hơn) — bất đối xứng vì asset đồ hoạ 2 hướng
-       khác kích thước, không phải lỗi.
+    1. TƯỜNG (`wall_sections` — mọi `WallSection` thật, đọc trực tiếp từ
+       `wall_system`, không quan tâm nguồn dữ liệu là `build_ring()` hay file
+       Tiled): mỗi section chặn đúng vùng ô lưới phủ bởi bounding-box hiển thị
+       CHUNG của nó (`WorldQuery._WALL_VISUAL_W/H` — cùng hằng số dùng cho
+       `is_wall_visual_blocked()`, đã đủ lớn để phủ sprite lớn nhất trong 6
+       loại). Data-driven hoàn toàn theo VỊ TRÍ TƯỜNG THẬT — vẽ tường hình gì
+       trong Tiled (không nhất thiết là hình chữ nhật) thì vùng cấm xây tự
+       động bám theo đúng hình đó, không còn phụ thuộc `MARIA_BOX`/`ROSE_BOX`/
+       `SINA_BOX`.
     2. VẬT THỂ TRANG TRÍ (`OBJECTS` — cây/bụi/prop): với mỗi object, tra
        footprint (`tw,th`) theo `kind` từ `BUILDING_DEFS` (mặc định 2×2 nếu
        không khớp loại nào), rồi cộng offset vẽ THẬT (`_kind_tile_offset`,
@@ -853,25 +857,15 @@ def _build_blocked_tiles(sprites=None, castle_surf=None) -> set[tuple[int, int]]
     """
     blocked: set[tuple[int, int]] = set()
 
-    # Wall rings — asymmetric buffer:
-    #   top/left faces  → 1 tile inward  (sprites grow outward)
-    #   right/bottom faces → 2 tiles inward (wall_Y sprites extend inward)
-    for (_wl, _wt, _wr, _wb) in (MARIA_BOX, ROSE_BOX, SINA_BOX):
-        # top row (buf 1 above, buf 3 below for wall base)
-        for _c in range(_wl - 1, _wr + 2):
-            for _r in range(_wt - 1, _wt + 4):
-                blocked.add((_c, _r))
-        # bottom row (2 inward, wall tile excluded)
-        for _c in range(_wl - 1, _wr + 2):
-            for _r in range(_wb - 3, _wb):
-                blocked.add((_c, _r))
-        # left column (buf 1 each side)
-        for _r in range(_wt - 1, _wb + 2):
-            for _c in range(_wl - 1, _wl + 2):
-                blocked.add((_c, _r))
-        # right column (buf 2 inward / left, buf 1 outward / right)
-        for _r in range(_wt - 1, _wb + 2):
-            for _c in range(_wr - 2, _wr + 2):
+    # Tường — chặn đúng vùng ô phủ bởi bounding-box hiển thị của TỪNG section thật.
+    _vw = WorldQuery._WALL_VISUAL_W
+    _vh = WorldQuery._WALL_VISUAL_H
+    for _ws in wall_sections:
+        _wx, _wy = float(_ws.x), float(_ws.y)
+        _c0, _c1 = int(_wx // TILE), int((_wx + _vw) // TILE)
+        _r0, _r1 = int(_wy // TILE), int((_wy + _vh) // TILE)
+        for _c in range(_c0, _c1 + 1):
+            for _r in range(_r0, _r1 + 1):
                 blocked.add((_c, _r))
 
     # Objects — blocked zone matching Pass 2 sprite blit position exactly
@@ -1367,7 +1361,14 @@ def main(initial_choice=None):
         SoundManager.get_instance().init_sounds(os.path.join(os.path.dirname(__file__), 'titans_last_bastion'))
     except Exception as e:
         print("Sound init err:", e)
-    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    # Fullscreen KIỂU CỬA SỔ KHÔNG VIỀN (borderless windowed), không dùng
+    # pygame.FULLSCREEN (độc quyền màn hình) — fullscreen độc quyền xung đột
+    # với các công cụ chụp màn hình/overlay (Snipping Tool, Xbox Game Bar,
+    # Discord...), khiến SDL phát sinh nhầm sự kiện pygame.QUIT và game tự
+    # thoát ngay khi người dùng chụp màn hình. NOFRAME nhìn giống hệt
+    # fullscreen nhưng không giữ độc quyền nên không bị lỗi này.
+    _display_info = pygame.display.Info()
+    screen = pygame.display.set_mode((_display_info.current_w, _display_info.current_h), pygame.NOFRAME)
     SCREEN_W = screen.get_width()
     SCREEN_H = screen.get_height()
     pygame.display.set_caption("Titan's Last Bastion — Total Map Demo")
@@ -1430,10 +1431,23 @@ def main(initial_choice=None):
                 ground_surf.blit(_sv[_tid % len(_sv)], (_px, _py))
     del _gv, _pv, _sv  # giải phóng tham chiếu tạm
 
-    maria_pos = build_ring(*MARIA_BOX)
-    rose_pos  = build_ring(*ROSE_BOX)
-    sina_pos  = build_ring(*SINA_BOX)
+    try:
+        from structures.wall.tiled_loader import load_walls_from_tiled
+        maria_pos, rose_pos, sina_pos = load_walls_from_tiled(
+            MARIA_BOX, ROSE_BOX, SINA_BOX, TILE)
+    except (FileNotFoundError, StopIteration):
+        # Chưa tạo/chưa lưu walls_horizontal.tmx + walls_vertical.tmx trong
+        # mapdata/ (VD: mới clone repo, hoặc đang thử nghiệm bằng Tiled) ->
+        # dùng lại layout hardcode gốc, không crash.
+        maria_pos = build_ring(*MARIA_BOX)
+        rose_pos  = build_ring(*ROSE_BOX)
+        sina_pos  = build_ring(*SINA_BOX)
     wall_system = WallSystem(maria_pos, rose_pos, sina_pos)
+    # Danh sách phẳng mọi WallSection thật (bất kể vòng nào) — dùng làm nguồn
+    # data-driven duy nhất cho vùng cấm xây (`_build_blocked_tiles`), thay vì
+    # buffer theo hình chữ nhật cố định — để tường vẽ tự do trong Tiled (không
+    # còn là hình chữ nhật) vẫn tự động chặn xây đúng vị trí thật.
+    _wall_sections_for_block = [s for w in wall_system.all_walls() for s in w._sections]
     WorldQuery.reset()
     # THÊM MỚI: xoá sạch mọi singleton phiên trước — bắt buộc khi main() được
     # gọi lại (New Game / Continue giữa phiên qua "Back to Menu"), vô hại khi
@@ -1525,10 +1539,10 @@ def main(initial_choice=None):
 
     # ── Resource state & cell registry ─────────────────────────────────────────
     res      = ResourceState()
-    registry = BuildingRegistry(blocked=_build_blocked_tiles(sprites, castle_surf))
+    registry = BuildingRegistry(blocked=_build_blocked_tiles(_wall_sections_for_block, sprites, castle_surf))
 
     # ── Initial buildings (hardcoded layout) ──────────────────────────────────
-    registry._blocked = _build_blocked_tiles(sprites, castle_surf)
+    registry._blocked = _build_blocked_tiles(_wall_sections_for_block, sprites, castle_surf)
     _BLDG_DEFS_BY_NAME = {d['cls'].__name__: (d['tw'], d['th'], d['cls'])
                            for d in BUILDING_DEFS.values() if d.get('cls')}
     _INIT_BLDS = [
@@ -1798,7 +1812,7 @@ def main(initial_choice=None):
                 OBJECTS.remove(_entry)
                 WorldQuery.remove_static_anchor((_otx, _oty, 'tree'))
                 _chopped_trees.add((_otx, _oty))
-        registry._blocked = _build_blocked_tiles(sprites, castle_surf)
+        registry._blocked = _build_blocked_tiles(_wall_sections_for_block, sprites, castle_surf)
 
     _respawn_timer    = 0.0        # Timer chờ hồi sinh (30s)
     _last_cmdr_class  = None       # Class tướng được triệu hồi gần nhất (để Tab respawn)
@@ -2656,7 +2670,7 @@ def main(initial_choice=None):
                             if _chop_target in OBJECTS:
                                 OBJECTS.remove(_chop_target)
                             WorldQuery.remove_static_anchor((_ctx, _cty, 'tree'))
-                            registry._blocked = _build_blocked_tiles(sprites, castle_surf)
+                            registry._blocked = _build_blocked_tiles(_wall_sections_for_block, sprites, castle_surf)
                             _chopped_trees.add((_ctx, _cty))
                             from systems.loot_system import DroppedLoot as _DroppedLoot
                             WorldQuery.spawn_entity(_DroppedLoot(
@@ -3734,7 +3748,7 @@ def main(initial_choice=None):
                                         for _dc in range(_bd['tw']):
                                             for _dr in range(_bd['th']):
                                                 registry._occupied.add((_tc_fp + _dc, _tr_fp + _dr))
-                                        registry._blocked = _build_blocked_tiles(sprites, castle_surf)
+                                        registry._blocked = _build_blocked_tiles(_wall_sections_for_block, sprites, castle_surf)
                                         if _bd['kind'] in _ODM_ANCHOR_KINDS:
                                             WorldQuery.register_static_anchor(
                                                 pygame.Rect(_tc_fp * TILE, _tr_fp * TILE,

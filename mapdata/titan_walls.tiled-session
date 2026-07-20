@@ -1,0 +1,69 @@
+{
+    "activeFile": "walls.tmx",
+    "expandedProjectPaths": [
+        "."
+    ],
+    "file.lastUsedOpenFilter": "All Files (*)",
+    "fileStates": {
+        "": {
+            "scaleInDock": 0.75
+        },
+        "walls.tmx": {
+            "scale": 0.125,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 2640,
+                "y": 1892
+            }
+        },
+        "walls.tmx#corners": {
+            "dynamicWrapping": true,
+            "scaleInDock": 0.75
+        },
+        "walls.tmx#wall_Y": {
+            "dynamicWrapping": false,
+            "scaleInDock": 1
+        },
+        "walls.tmx#wall_h": {
+            "dynamicWrapping": true,
+            "scaleInDock": 1
+        },
+        "walls_horizontal.tmx": {
+            "scale": 0.33,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 2687.878787878788,
+                "y": 2174.2424242424245
+            }
+        },
+        "walls_horizontal.tmx#corners": {
+            "dynamicWrapping": false,
+            "scaleInDock": 1
+        },
+        "walls_horizontal.tmx#wall_h": {
+            "dynamicWrapping": true,
+            "scaleInDock": 0.5
+        },
+        "walls_vertical.tmx": {
+            "scale": 0.125,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 2776,
+                "y": 2188
+            }
+        },
+        "walls_vertical.tmx#wall_Y": {
+            "dynamicWrapping": false,
+            "scaleInDock": 1
+        }
+    },
+    "openFiles": [
+        "walls.tmx"
+    ],
+    "project": "titan_walls.tiled-project",
+    "recentFiles": [
+        "walls.tmx",
+        "walls_vertical.tmx",
+        "walls_horizontal.tmx"
+    ]
+}
